@@ -15,18 +15,18 @@ function startPipelineJobs() {
     const quality = env_1.env.SCHEDULE_DATA_QUALITY ?? "*/15 * * * *"; // every 15 minutes
     // For now all collectors run together; sources registry decides which ones exist.
     node_cron_1.default.schedule(official, async () => {
-        await queues_1.collectorsQueue.add("official_collect", {}, { jobId: `official:${Date.now()}` });
+        await queues_1.collectorsQueue.add("official_collect", {}, { jobId: `official_${Date.now()}` });
     });
     node_cron_1.default.schedule(company, async () => {
-        await queues_1.collectorsQueue.add("company_collect", {}, { jobId: `company:${Date.now()}` });
+        await queues_1.collectorsQueue.add("company_collect", {}, { jobId: `company_${Date.now()}` });
     });
     node_cron_1.default.schedule(observed, async () => {
-        await queues_1.collectorsQueue.add("observed_collect", {}, { jobId: `observed:${Date.now()}` });
+        await queues_1.collectorsQueue.add("observed_collect", {}, { jobId: `observed_${Date.now()}` });
     });
     node_cron_1.default.schedule(reconcile, async () => {
-        await queues_1.reconcileQueue.add("reconcile", {}, { jobId: `reconcile:${Date.now()}` });
+        await queues_1.reconcileQueue.add("reconcile", {}, { jobId: `reconcile_${Date.now()}` });
     });
     node_cron_1.default.schedule(quality, async () => {
-        await queues_1.qualityQueue.add("quality", {}, { jobId: `quality:${Date.now()}` });
+        await queues_1.qualityQueue.add("quality", {}, { jobId: `quality_${Date.now()}` });
     });
 }

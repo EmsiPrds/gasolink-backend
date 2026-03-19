@@ -11,23 +11,23 @@ export function startPipelineJobs() {
 
   // For now all collectors run together; sources registry decides which ones exist.
   cron.schedule(official, async () => {
-    await collectorsQueue.add("official_collect", {}, { jobId: `official:${Date.now()}` });
+    await collectorsQueue.add("official_collect", {}, { jobId: `official_${Date.now()}` });
   });
 
   cron.schedule(company, async () => {
-    await collectorsQueue.add("company_collect", {}, { jobId: `company:${Date.now()}` });
+    await collectorsQueue.add("company_collect", {}, { jobId: `company_${Date.now()}` });
   });
 
   cron.schedule(observed, async () => {
-    await collectorsQueue.add("observed_collect", {}, { jobId: `observed:${Date.now()}` });
+    await collectorsQueue.add("observed_collect", {}, { jobId: `observed_${Date.now()}` });
   });
 
   cron.schedule(reconcile, async () => {
-    await reconcileQueue.add("reconcile", {}, { jobId: `reconcile:${Date.now()}` });
+    await reconcileQueue.add("reconcile", {}, { jobId: `reconcile_${Date.now()}` });
   });
 
   cron.schedule(quality, async () => {
-    await qualityQueue.add("quality", {}, { jobId: `quality:${Date.now()}` });
+    await qualityQueue.add("quality", {}, { jobId: `quality_${Date.now()}` });
   });
 }
 

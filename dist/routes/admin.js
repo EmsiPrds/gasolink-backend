@@ -1,11 +1,17 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.adminRouter = void 0;
 const express_1 = require("express");
+const multer_1 = __importDefault(require("multer"));
 const auth_1 = require("../middleware/auth");
 const requireRole_1 = require("../middleware/requireRole");
 const adminController_1 = require("../controllers/adminController");
+const adminDoeController_1 = require("../controllers/adminDoeController");
 exports.adminRouter = (0, express_1.Router)();
+const upload = (0, multer_1.default)({ dest: "uploads/" });
 exports.adminRouter.use(auth_1.requireAuth, (0, requireRole_1.requireRole)("admin"));
 exports.adminRouter.get("/summary", adminController_1.adminSummary);
 exports.adminRouter.get("/ph-prices", adminController_1.listPhPrices);
@@ -34,3 +40,9 @@ exports.adminRouter.get("/ingestion/published", adminController_1.listPublishedP
 exports.adminRouter.post("/ingestion/collect", adminController_1.triggerCollectors);
 exports.adminRouter.post("/ingestion/reconcile", adminController_1.triggerReconcile);
 exports.adminRouter.post("/ingestion/quality", adminController_1.triggerQuality);
+// DOE manual ingestion (PDF upload / link)
+exports.adminRouter.post("/doe/upload", upload.single("pdf"), adminDoeController_1.uploadDoePdf);
+exports.adminRouter.post("/doe/link", adminDoeController_1.submitDoeLink);
+exports.adminRouter.get("/doe/uploads", adminDoeController_1.listDoeUploads);
+exports.adminRouter.get("/doe/uploads/:rawSourceId", adminDoeController_1.getDoeUploadDetails);
+exports.adminRouter.post("/doe/preview/:rawSourceId/commit", adminDoeController_1.commitDoePreviewEndpoint);
