@@ -171,19 +171,30 @@ async function refreshGlobalNow(_req, res) {
 }
 // Ingestion health + pipeline browsing
 async function ingestionHealth(_req, res) {
-    const [rawCount, rawFailed, normalizedCount, publishedCount, latestLog] = await Promise.all([
+    const [rawCount, rawFailed, normalizedCount, publishedCount, latestLog, collectorsLog, reconcileLog, qualityLog,] = await Promise.all([
         RawScrapedSource_1.RawScrapedSource.countDocuments({}),
         RawScrapedSource_1.RawScrapedSource.countDocuments({ processingStatus: "failed" }),
         NormalizedFuelRecord_1.NormalizedFuelRecord.countDocuments({}),
         FinalPublishedFuelPrice_1.FinalPublishedFuelPrice.countDocuments({}),
         UpdateLog_1.UpdateLog.findOne({}).sort({ timestamp: -1 }).lean(),
+        UpdateLog_1.UpdateLog.findOne({ module: "collectors" }).sort({ timestamp: -1 }).lean(),
+        UpdateLog_1.UpdateLog.findOne({ module: "reconciliation" }).sort({ timestamp: -1 }).lean(),
+        UpdateLog_1.UpdateLog.findOne({ module: "data_quality" }).sort({ timestamp: -1 }).lean(),
     ]);
+    const formatModuleLog = (log) => log
+        ? { lastRunAt: log.timestamp, status: log.status, message: log.message }
+        : null;
     return res.json((0, apiResponse_1.ok)({
         rawCount,
         rawFailed,
         normalizedCount,
         publishedCount,
         latestLog: latestLog ?? null,
+        pipelineStatus: {
+            collectors: formatModuleLog(collectorsLog),
+            reconciliation: formatModuleLog(reconcileLog),
+            dataQuality: formatModuleLog(qualityLog),
+        },
     }));
 }
 async function listRawSources(_req, res) {
@@ -203,14 +214,14 @@ async function listPublishedPrices(_req, res) {
     return res.json((0, apiResponse_1.ok)({ items }));
 }
 async function triggerCollectors(_req, res) {
-    await queues_1.collectorsQueue.add("manual_collectors", {}, { jobId: `manual:collectors:${Date.now()}` });
+    await queues_1.collectorsQueue.add("manual_collectors", {}, { jobId: `manual_collectors_${Date.now()}` });
     return res.json((0, apiResponse_1.ok)({ requested: true }));
 }
 async function triggerReconcile(_req, res) {
-    await queues_1.reconcileQueue.add("manual_reconcile", {}, { jobId: `manual:reconcile:${Date.now()}` });
+    await queues_1.reconcileQueue.add("manual_reconcile", {}, { jobId: `manual_reconcile_${Date.now()}` });
     return res.json((0, apiResponse_1.ok)({ requested: true }));
 }
 async function triggerQuality(_req, res) {
-    await queues_1.qualityQueue.add("manual_quality", {}, { jobId: `manual:quality:${Date.now()}` });
+    await queues_1.qualityQueue.add("manual_quality", {}, { jobId: `manual_quality_${Date.now()}` });
     return res.json((0, apiResponse_1.ok)({ requested: true }));
 }

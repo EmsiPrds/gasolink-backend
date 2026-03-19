@@ -22,6 +22,15 @@ const RawScrapedSourceSchema = new mongoose_1.Schema({
         index: true,
     },
     errorMessage: { type: String },
+    // Optional context for admin-triggered manual uploads (e.g. DOE PDFs/links)
+    isManualAdminSource: { type: Boolean, default: false, index: true },
+    uploadContext: {
+        uploadedBy: { type: mongoose_1.Schema.Types.ObjectId, ref: "AdminUser" },
+        uploadType: { type: String, enum: ["file", "link"] },
+        originalFilename: { type: String, trim: true },
+        originalUrl: { type: String, trim: true },
+        note: { type: String, trim: true },
+    },
 }, { timestamps: true });
 // Avoid duplicating identical snapshots for the same source+parser+time bucket.
 RawScrapedSourceSchema.index({ sourceUrl: 1, scrapedAt: -1 });

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import multer from "multer";
 import { requireAuth } from "../middleware/auth";
 import { requireRole } from "../middleware/requireRole";
 import {
@@ -29,8 +30,17 @@ import {
   updateInsight,
   updatePhPrice,
 } from "../controllers/adminController";
+import {
+  commitDoePreviewEndpoint,
+  getDoeUploadDetails,
+  listDoeUploads,
+  submitDoeLink,
+  uploadDoePdf,
+} from "../controllers/adminDoeController";
 
 export const adminRouter = Router();
+
+const upload = multer({ dest: "uploads/" });
 
 adminRouter.use(requireAuth, requireRole("admin"));
 
@@ -68,4 +78,11 @@ adminRouter.get("/ingestion/published", listPublishedPrices);
 adminRouter.post("/ingestion/collect", triggerCollectors);
 adminRouter.post("/ingestion/reconcile", triggerReconcile);
 adminRouter.post("/ingestion/quality", triggerQuality);
+
+// DOE manual ingestion (PDF upload / link)
+adminRouter.post("/doe/upload", upload.single("pdf"), uploadDoePdf);
+adminRouter.post("/doe/link", submitDoeLink);
+adminRouter.get("/doe/uploads", listDoeUploads);
+adminRouter.get("/doe/uploads/:rawSourceId", getDoeUploadDetails);
+adminRouter.post("/doe/preview/:rawSourceId/commit", commitDoePreviewEndpoint);
 

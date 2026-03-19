@@ -15,6 +15,9 @@ const EnvSchema = z.object({
   // Queue/Workers
   REDIS_URL: z.string().min(1).optional(),
 
+  // Source selection
+  SOURCES_MODE: z.enum(["all", "doe_only"]).optional().default("all"),
+
   // Schedules (cron strings)
   SCHEDULE_GLOBAL_FETCH: z.string().min(1).optional(),
   SCHEDULE_PH_OFFICIAL: z.string().min(1).optional(),

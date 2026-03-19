@@ -16,8 +16,17 @@ const errorHandler_1 = require("./middleware/errorHandler");
 exports.app = (0, express_1.default)();
 exports.app.disable("x-powered-by");
 exports.app.use((0, helmet_1.default)());
+const corsOrigins = env_1.env.CORS_ORIGIN.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 exports.app.use((0, cors_1.default)({
-    origin: env_1.env.CORS_ORIGIN,
+    origin: (origin, cb) => {
+        if (!origin)
+            return cb(null, true); // non-browser clients / same-origin
+        if (corsOrigins.includes(origin))
+            return cb(null, true);
+        return cb(null, false);
+    },
     credentials: true,
 }));
 exports.app.use(express_1.default.json({ limit: "1mb" }));

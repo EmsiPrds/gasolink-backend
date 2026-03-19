@@ -38,10 +38,11 @@ async function reconcileFuelRecords(params) {
     const sinceMinutes = params?.sinceMinutes ?? 180;
     const from = new Date(now.getTime() - sinceMinutes * 60_000);
     const candidates = await NormalizedFuelRecord_1.NormalizedFuelRecord.find({ updatedAt: { $gte: from } }).sort({ confidenceScore: -1 }).lean();
-    // Group by fuelType+region+city (regional supported; city optional).
+    // Group by fuelType+region+city+companyName.
+    // This avoids mixing "official regional" with "company advisory" with "observed station" into a single competition.
     const groups = new Map();
     for (const c of candidates) {
-        const key = `${c.fuelType}::${c.region}::${c.city ?? ""}`;
+        const key = `${c.fuelType}::${c.region}::${c.city ?? ""}::${c.companyName ?? ""}`;
         const arr = groups.get(key) ?? [];
         arr.push(c);
         groups.set(key, arr);
@@ -62,7 +63,11 @@ async function reconcileFuelRecords(params) {
         const winner = sorted[0];
         if (!winner)
             continue;
-        const displayType = "ph_final";
+        const displayType = winner.sourceType === "company_advisory"
+            ? "ph_company"
+            : winner.sourceType === "observed_station"
+                ? "ph_observed"
+                : "ph_final";
         const publishKey = buildPublishKey({
             displayType,
             fuelType: winner.fuelType,

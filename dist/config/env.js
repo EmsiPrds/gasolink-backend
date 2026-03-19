@@ -17,6 +17,8 @@ const EnvSchema = zod_1.z.object({
     SEED_ADMIN_PASSWORD: zod_1.z.string().min(8).optional(),
     // Queue/Workers
     REDIS_URL: zod_1.z.string().min(1).optional(),
+    // Source selection
+    SOURCES_MODE: zod_1.z.enum(["all", "doe_only"]).optional().default("all"),
     // Schedules (cron strings)
     SCHEDULE_GLOBAL_FETCH: zod_1.z.string().min(1).optional(),
     SCHEDULE_PH_OFFICIAL: zod_1.z.string().min(1).optional(),

@@ -8,7 +8,25 @@ import { fetchStatic } from "../scrapers/httpFetch";
 
 export async function normalizePendingRawSources(params?: { limit?: number }) {
   const limit = params?.limit ?? 50;
-  const pending = await RawScrapedSource.find({ processingStatus: "raw" }).sort({ scrapedAt: -1 }).limit(limit);
+  const pending = await RawScrapedSource.find({
+    $or: [
+      // Normal flow: only untouched raw placeholders.
+      { processingStatus: "raw" },
+
+      // Retry fail-closed errors that are known to be parser/regex related.
+      // This prevents "Raw failed" from staying stuck after we improve parsing logic.
+      {
+        processingStatus: "failed",
+        parserId: "doe_pdf_v1",
+        errorMessage: {
+          $regex: "(expected fuel patterns|no fuel prices/deltas extracted)",
+          $options: "i",
+        },
+      },
+    ],
+  })
+    .sort({ scrapedAt: -1 })
+    .limit(limit);
 
   let normalized = 0;
   let failed = 0;

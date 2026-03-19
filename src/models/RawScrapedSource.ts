@@ -24,6 +24,16 @@ const RawScrapedSourceSchema = new Schema(
       index: true,
     },
     errorMessage: { type: String },
+
+    // Optional context for admin-triggered manual uploads (e.g. DOE PDFs/links)
+    isManualAdminSource: { type: Boolean, default: false, index: true },
+    uploadContext: {
+      uploadedBy: { type: Schema.Types.ObjectId, ref: "AdminUser" },
+      uploadType: { type: String, enum: ["file", "link"] },
+      originalFilename: { type: String, trim: true },
+      originalUrl: { type: String, trim: true },
+      note: { type: String, trim: true },
+    },
   },
   { timestamps: true },
 );

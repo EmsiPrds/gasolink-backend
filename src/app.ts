@@ -12,9 +12,16 @@ export const app = express();
 
 app.disable("x-powered-by");
 app.use(helmet());
+const corsOrigins = env.CORS_ORIGIN.split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 app.use(
   cors({
-    origin: env.CORS_ORIGIN,
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // non-browser clients / same-origin
+      if (corsOrigins.includes(origin)) return cb(null, true);
+      return cb(null, false);
+    },
     credentials: true,
   }),
 );

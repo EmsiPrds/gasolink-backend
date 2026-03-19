@@ -114,6 +114,7 @@ async function main() {
         sourceType: "official_local",
         sourceName: "Seeded official source",
         sourceUrl: "https://example.com/doe/seed",
+        parserId: "doe_article_v1",
         rawHtml: "<html><body>seed</body></html>",
         scrapedAt: now,
         parserVersion: "v1",

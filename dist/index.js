@@ -7,7 +7,18 @@ const jobs_1 = require("./jobs");
 async function main() {
     await (0, db_1.connectDb)();
     app_1.app.listen(env_1.env.PORT, () => {
-        console.log(`Gasolink API listening on :${env_1.env.PORT}`);
+        const baseUrl = env_1.env.NODE_ENV === "production"
+            ? `https://api.gasolink.app:${env_1.env.PORT}`
+            : `http://localhost:${env_1.env.PORT}`;
+        console.log("");
+        console.log("🚀 Gasolink API development server");
+        console.log("----------------------------------");
+        console.log(`Environment: ${env_1.env.NODE_ENV}`);
+        console.log(`Port:       ${env_1.env.PORT}`);
+        console.log(`Base URL:   ${baseUrl}`);
+        console.log("");
+        console.log("HTTP request logs (morgan) will appear below.");
+        console.log("");
         (0, jobs_1.startJobs)();
     });
 }

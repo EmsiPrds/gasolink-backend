@@ -1,7 +1,6 @@
 import type { Collector } from "../collectorTypes";
 import type { SourceDefinition } from "../../sources/types";
 import { RawScrapedSource } from "../../models/RawScrapedSource";
-import { chromium } from "playwright";
 
 /**
  * Dynamic collector scaffold.
@@ -14,9 +13,15 @@ export const dynamicBrowserCollector: Collector = {
   canHandle: (src: SourceDefinition) => src.scrapeMode === "dynamic_browser",
   runOne: async (src: SourceDefinition) => {
     try {
-      // Force using the installed Chromium executable. On some Windows installs,
-      // Playwright may look for chromium_headless_shell which may not be present.
-      const browser = await chromium.launch({ headless: true, executablePath: chromium.executablePath() });
+      // Ensure Playwright uses a stable, project-local browsers path.
+      // When running under certain IDE sandboxes, the default cache path can change,
+      // which makes Playwright look for a non-existent executable.
+      // Force override (Cursor may set this to a sandbox cache path).
+      process.env.PLAYWRIGHT_BROWSERS_PATH = "0";
+
+      // Import after setting env var so Playwright resolves the correct browsers path.
+      const { chromium } = await import("playwright");
+      const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({
         userAgent:
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",

@@ -172,13 +172,30 @@ export async function refreshGlobalNow(_req: Request, res: Response) {
 
 // Ingestion health + pipeline browsing
 export async function ingestionHealth(_req: Request, res: Response) {
-  const [rawCount, rawFailed, normalizedCount, publishedCount, latestLog] = await Promise.all([
+  const [
+    rawCount,
+    rawFailed,
+    normalizedCount,
+    publishedCount,
+    latestLog,
+    collectorsLog,
+    reconcileLog,
+    qualityLog,
+  ] = await Promise.all([
     RawScrapedSource.countDocuments({}),
     RawScrapedSource.countDocuments({ processingStatus: "failed" }),
     NormalizedFuelRecord.countDocuments({}),
     FinalPublishedFuelPrice.countDocuments({}),
     UpdateLog.findOne({}).sort({ timestamp: -1 }).lean(),
+    UpdateLog.findOne({ module: "collectors" }).sort({ timestamp: -1 }).lean(),
+    UpdateLog.findOne({ module: "reconciliation" }).sort({ timestamp: -1 }).lean(),
+    UpdateLog.findOne({ module: "data_quality" }).sort({ timestamp: -1 }).lean(),
   ]);
+
+  const formatModuleLog = (log: any) =>
+    log
+      ? { lastRunAt: log.timestamp, status: log.status, message: log.message }
+      : null;
 
   return res.json(
     ok({
@@ -187,6 +204,11 @@ export async function ingestionHealth(_req: Request, res: Response) {
       normalizedCount,
       publishedCount,
       latestLog: latestLog ?? null,
+      pipelineStatus: {
+        collectors: formatModuleLog(collectorsLog),
+        reconciliation: formatModuleLog(reconcileLog),
+        dataQuality: formatModuleLog(qualityLog),
+      },
     }),
   );
 }
@@ -210,17 +232,17 @@ export async function listPublishedPrices(_req: Request, res: Response) {
 }
 
 export async function triggerCollectors(_req: Request, res: Response) {
-  await collectorsQueue.add("manual_collectors", {}, { jobId: `manual:collectors:${Date.now()}` });
+  await collectorsQueue.add("manual_collectors", {}, { jobId: `manual_collectors_${Date.now()}` });
   return res.json(ok({ requested: true }));
 }
 
 export async function triggerReconcile(_req: Request, res: Response) {
-  await reconcileQueue.add("manual_reconcile", {}, { jobId: `manual:reconcile:${Date.now()}` });
+  await reconcileQueue.add("manual_reconcile", {}, { jobId: `manual_reconcile_${Date.now()}` });
   return res.json(ok({ requested: true }));
 }
 
 export async function triggerQuality(_req: Request, res: Response) {
-  await qualityQueue.add("manual_quality", {}, { jobId: `manual:quality:${Date.now()}` });
+  await qualityQueue.add("manual_quality", {}, { jobId: `manual_quality_${Date.now()}` });
   return res.json(ok({ requested: true }));
 }
 
