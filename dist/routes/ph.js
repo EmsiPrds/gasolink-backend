@@ -1,0 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.phRouter = void 0;
+const express_1 = require("express");
+const phControllerV2_1 = require("../controllers/phControllerV2");
+exports.phRouter = (0, express_1.Router)();
+exports.phRouter.get("/latest", phControllerV2_1.getPhLatest);
+exports.phRouter.get("/history", phControllerV2_1.getPhHistory);
+exports.phRouter.get("/observed", phControllerV2_1.getPhObserved);
+exports.phRouter.get("/sources/:id", phControllerV2_1.getPhSourceDetails);

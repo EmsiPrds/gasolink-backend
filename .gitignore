@@ -1,0 +1,10 @@
+node_modules
+build
+bundle
+*.env
+.env
+.env.local
+.env.*.local
+*.production
+.scpignore
+publish.py
