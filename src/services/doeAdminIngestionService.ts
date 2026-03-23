@@ -5,7 +5,7 @@ import { NormalizedFuelRecord } from "../models/NormalizedFuelRecord";
 import { UpdateLog } from "../models/UpdateLog";
 import { extractPdfText } from "./pdfTextService";
 import { doePdfParser } from "../parsers/doe/doePdfParser";
-import { fetchStatic } from "../scrapers/httpFetch";
+import { fetchStatic } from "../utils/http";
 import { buildFingerprint } from "../normalization/fingerprint";
 import { validateCandidate } from "../normalization/validators";
 

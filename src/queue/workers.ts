@@ -1,7 +1,8 @@
 import { Worker } from "bullmq";
 import { redisConnection } from "./redis";
-import { runAllCollectors } from "../scrapers/runCollectors";
+import { runAiSearchDataGathering } from "../jobs/aiSearchJob";
 import { reconcileFuelRecords } from "../reconciliation/reconcileFuelRecords";
+import { runAiPriceEstimation } from "../reconciliation/aiPriceEstimation";
 import { runDataQualityMonitor } from "../quality/dataQualityMonitor";
 import { UpdateLog } from "../models/UpdateLog";
 import { normalizePendingRawSources } from "../pipeline/normalizeRawSources";
@@ -13,7 +14,7 @@ export function startWorkers() {
   new Worker(
     "collectors",
     async () => {
-      await runAllCollectors();
+      await runAiSearchDataGathering();
       await normalizePendingRawSources({ limit: 100 });
     },
     { connection },
@@ -38,10 +39,19 @@ export function startWorkers() {
     { connection },
   );
 
+  // AI Estimation worker
+  new Worker(
+    "ai-estimation",
+    async () => {
+      await runAiPriceEstimation();
+    },
+    { connection },
+  );
+
   UpdateLog.create({
     module: "workers",
     status: "success",
-    message: "Workers started (collectors, reconcile, quality).",
+    message: "Workers started (collectors, reconcile, quality, ai-estimation).",
     timestamp: new Date(),
   }).catch(() => {});
 }

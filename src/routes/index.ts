@@ -8,6 +8,8 @@ import { alertsRouter } from "./alerts";
 import { forecastRouter } from "./forecast";
 import { authRouter } from "./auth";
 import { adminRouter } from "./admin";
+import { pricesRouter } from "./prices";
+import { intelligenceRouter } from "./intelligence";
 
 export const apiRouter = Router();
 
@@ -20,4 +22,6 @@ apiRouter.use("/insights", insightsRouter);
 apiRouter.use("/alerts", alertsRouter);
 apiRouter.use("/forecast", forecastRouter);
 apiRouter.use("/admin", adminRouter);
+apiRouter.use("/prices", pricesRouter);
+apiRouter.use("/intelligence", intelligenceRouter);
 

@@ -4,6 +4,9 @@ import type { NormalizedFuelRecordDoc } from "../models/NormalizedFuelRecord";
 import { UpdateLog } from "../models/UpdateLog";
 import { buildFingerprint } from "../normalization/fingerprint";
 import { isStale } from "../normalization/staleness";
+import { refinePriceWithAi } from "../services/aiService";
+import { GlobalPrice } from "../models/GlobalPrice";
+import { FuelTypeValues, RegionValues } from "../models/enums";
 
 function sourcePriority(sourceType: NormalizedFuelRecordDoc["sourceType"]): number {
   switch (sourceType) {
@@ -39,7 +42,13 @@ export async function reconcileFuelRecords(params?: { sinceMinutes?: number }) {
   const sinceMinutes = params?.sinceMinutes ?? 180;
   const from = new Date(now.getTime() - sinceMinutes * 60_000);
 
-  const candidates = await NormalizedFuelRecord.find({ updatedAt: { $gte: from } }).sort({ confidenceScore: -1 }).lean();
+  const candidates = await NormalizedFuelRecord.find({ 
+    updatedAt: { $gte: from },
+    $or: [
+        { effectiveAt: { $gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) } },
+        { sourcePublishedAt: { $gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) } },
+    ]
+  }).sort({ confidenceScore: -1 }).lean();
 
   // Group by fuelType+region+city+companyName.
   // This avoids mixing "official regional" with "company advisory" with "observed station" into a single competition.
@@ -65,6 +74,13 @@ export async function reconcileFuelRecords(params?: { sinceMinutes?: number }) {
 
     const winner = sorted[0];
     if (!winner) continue;
+
+    // Calculate average price from all candidates with a pricePerLiter
+    const itemsWithPrice = items.filter((item) => typeof item.pricePerLiter === "number");
+    const averagePrice =
+      itemsWithPrice.length > 0
+        ? itemsWithPrice.reduce((sum, item) => sum + (item.pricePerLiter ?? 0), 0) / itemsWithPrice.length
+        : null;
 
     const displayType =
       winner.sourceType === "company_advisory"
@@ -94,6 +110,33 @@ export async function reconcileFuelRecords(params?: { sinceMinutes?: number }) {
 
     const lastVerifiedAt = winner.sourcePublishedAt ?? winner.scrapedAt ?? winner.updatedAt ?? now;
 
+    let finalPrice = typeof winner.pricePerLiter === "number" ? winner.pricePerLiter : null;
+
+    // If we have a priceChange but not a final price, estimate it from the last known price
+    if (finalPrice === null && typeof winner.priceChange === "number") {
+      const lastPriceDoc = await FinalPublishedFuelPrice.findOne(
+        {
+          fuelType: winner.fuelType,
+          region: winner.region,
+          finalPrice: { $ne: null },
+        },
+        { finalPrice: 1 },
+      ).sort({ lastVerifiedAt: -1 });
+
+      if (lastPriceDoc && typeof lastPriceDoc.finalPrice === "number") {
+        finalPrice = lastPriceDoc.finalPrice + winner.priceChange;
+      } else {
+        // Fallback to baseline prices if no history exists (approximate PH prices as of March 2026)
+        const baseline: Record<string, number> = {
+          Gasoline: 65.5,
+          Diesel: 58.2,
+          Kerosene: 72.4,
+        };
+        const base = baseline[winner.fuelType] ?? 60;
+        finalPrice = base + winner.priceChange;
+      }
+    }
+
     // Staleness gating (fail closed): do not publish stale advisory/observed/estimate.
     if (isStale(winner.sourceType, new Date(lastVerifiedAt), now) && winner.sourceType !== "official_local") {
       continue;
@@ -107,7 +150,8 @@ export async function reconcileFuelRecords(params?: { sinceMinutes?: number }) {
         fuelType: winner.fuelType,
         region: winner.region,
         city: winner.city,
-        finalPrice: typeof winner.pricePerLiter === "number" ? winner.pricePerLiter : null,
+        finalPrice: finalPrice,
+        averagePrice: averagePrice ?? null,
         priceChange: winner.priceChange,
         currency: winner.currency ?? "PHP",
         supportingSources,

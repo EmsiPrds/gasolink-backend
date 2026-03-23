@@ -6,23 +6,23 @@ export const NormalizedCandidateSchema = z.object({
   statusLabel: z.enum(StatusLabelValues),
   confidenceScore: z.number().min(0).max(1),
 
-  companyName: z.string().min(1).optional(),
-  stationName: z.string().min(1).optional(),
+  companyName: z.string().min(1).nullish(),
+  stationName: z.string().min(1).nullish(),
   fuelType: z.enum(FuelTypeValues),
-  productName: z.string().min(1).optional(),
+  productName: z.string().min(1).nullish(),
 
   region: z.enum(RegionValues),
-  city: z.string().min(1).optional(),
+  city: z.string().min(1).nullish(),
 
-  pricePerLiter: z.number().min(0).optional(),
-  priceChange: z.number().optional(),
+  pricePerLiter: z.number().min(0).nullish(),
+  priceChange: z.number().nullish(),
   currency: z.literal("PHP"),
 
   sourceName: z.string().min(1),
   sourceUrl: z.string().url(),
-  sourcePublishedAt: z.coerce.date().optional(),
+  sourcePublishedAt: z.coerce.date().nullish(),
   scrapedAt: z.coerce.date(),
-  effectiveAt: z.coerce.date().optional(),
+  effectiveAt: z.coerce.date().nullish(),
 });
 
 export type NormalizedCandidateInput = z.infer<typeof NormalizedCandidateSchema>;

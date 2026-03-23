@@ -22,7 +22,8 @@ export async function getPhLatest(req: Request, res: Response) {
           // Shape-compat response for current frontend until it’s upgraded:
           _id: p._id,
           fuelType: p.fuelType,
-          price: typeof p.finalPrice === "number" ? p.finalPrice : 0,
+          price: typeof p.finalPrice === "number" ? p.finalPrice : null,
+          averagePrice: typeof p.averagePrice === "number" ? p.averagePrice : null,
           weeklyChange: typeof p.priceChange === "number" ? p.priceChange : 0,
           region: p.region,
           source: p.supportingSources?.[0]?.sourceName ?? "Gasolink",
@@ -62,7 +63,8 @@ export async function getPhHistory(req: Request, res: Response) {
       ? published.map((p: any) => ({
           _id: p._id,
           fuelType: p.fuelType,
-          price: typeof p.finalPrice === "number" ? p.finalPrice : 0,
+          price: typeof p.finalPrice === "number" ? p.finalPrice : null,
+          averagePrice: typeof p.averagePrice === "number" ? p.averagePrice : null,
           weeklyChange: typeof p.priceChange === "number" ? p.priceChange : 0,
           region: p.region,
           source: p.supportingSources?.[0]?.sourceName ?? "Gasolink",

@@ -13,7 +13,7 @@ export const sources: SourceDefinition[] = [
     sourceType: "official_local",
     sourceName: "DOE Oil Monitor (listing)",
     url: "https://doe.gov.ph/articles/group/liquid-fuels?category=Oil%20Monitor&display_type=Card",
-    scrapeMode: "static_html",
+    scrapeMode: "dynamic_browser",
     parserId: "doe_listing_v1",
   },
   {
@@ -21,7 +21,7 @@ export const sources: SourceDefinition[] = [
     sourceType: "official_local",
     sourceName: "DOE Retail Pump Prices – Price Adjustments (listing)",
     url: "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=Price%20Adjustments&display_type=Card",
-    scrapeMode: "static_html",
+    scrapeMode: "dynamic_browser",
     parserId: "doe_listing_v1",
   },
   {
@@ -29,7 +29,7 @@ export const sources: SourceDefinition[] = [
     sourceType: "official_local",
     sourceName: "DOE NCR Pump Prices (listing)",
     url: "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=NCR%20Pump%20Prices&display_type=Card",
-    scrapeMode: "static_html",
+    scrapeMode: "dynamic_browser",
     parserId: "doe_listing_v1",
   },
   {
@@ -37,7 +37,7 @@ export const sources: SourceDefinition[] = [
     sourceType: "official_local",
     sourceName: "DOE South Luzon Pump Prices (listing)",
     url: "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=South%20Luzon%20Pump%20Prices&display_type=Card",
-    scrapeMode: "static_html",
+    scrapeMode: "dynamic_browser",
     parserId: "doe_listing_v1",
   },
   {
@@ -45,7 +45,7 @@ export const sources: SourceDefinition[] = [
     sourceType: "official_local",
     sourceName: "DOE North Luzon Pump Prices (listing)",
     url: "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=North%20Luzon%20Pump%20Prices&display_type=Card",
-    scrapeMode: "static_html",
+    scrapeMode: "dynamic_browser",
     parserId: "doe_listing_v1",
   },
   {
@@ -53,7 +53,7 @@ export const sources: SourceDefinition[] = [
     sourceType: "official_local",
     sourceName: "DOE Visayas Pump Prices (listing)",
     url: "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=Visayas%20Pump%20Prices&display_type=Card",
-    scrapeMode: "static_html",
+    scrapeMode: "dynamic_browser",
     parserId: "doe_listing_v1",
   },
   {
@@ -61,7 +61,7 @@ export const sources: SourceDefinition[] = [
     sourceType: "official_local",
     sourceName: "DOE Mindanao Pump Prices (listing)",
     url: "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=Mindanao%20Pump%20Prices&display_type=Card",
-    scrapeMode: "static_html",
+    scrapeMode: "dynamic_browser",
     parserId: "doe_listing_v1",
   },
 
@@ -74,8 +74,8 @@ export const sources: SourceDefinition[] = [
   { id: "cleanfuel_site", sourceType: "company_advisory", sourceName: "Cleanfuel (site)", url: "https://cleanfuel.ph", scrapeMode: "static_html", parserId: "company_generic_v1" },
   { id: "unioil_site", sourceType: "company_advisory", sourceName: "Unioil (site)", url: "https://www.unioil.com", scrapeMode: "static_html", parserId: "company_generic_v1" },
   { id: "jetti_site", sourceType: "company_advisory", sourceName: "Jetti (site)", url: "https://www.jetti.com.ph", scrapeMode: "static_html", parserId: "company_generic_v1" },
-  { id: "ptt_site", sourceType: "company_advisory", sourceName: "PTT PH (site)", url: "https://www.pttphils.com", scrapeMode: "static_html", parserId: "company_generic_v1" },
-  { id: "total_site", sourceType: "company_advisory", sourceName: "TotalEnergies PH (site)", url: "https://totalenergies.ph", scrapeMode: "static_html", parserId: "company_generic_v1" },
+  { id: "ptt_site", sourceType: "company_advisory", sourceName: "PTT PH (site)", url: "https://www.pttphils.com/news-advisory/", scrapeMode: "static_html", parserId: "company_generic_v1" },
+  { id: "total_site", sourceType: "company_advisory", sourceName: "TotalEnergies PH (site)", url: "https://totalenergies.com.ph", scrapeMode: "static_html", parserId: "company_generic_v1" },
 
   // COMPANY/FACEBOOK (best-effort no-login; text+links only)
   { id: "petron_fb", sourceType: "company_advisory", sourceName: "Petron (Facebook)", url: "https://www.facebook.com/PetronCorporation", scrapeMode: "dynamic_browser", parserId: "fb_public_page_v1" },
@@ -83,14 +83,20 @@ export const sources: SourceDefinition[] = [
   { id: "caltex_fb", sourceType: "company_advisory", sourceName: "Caltex PH (Facebook)", url: "https://www.facebook.com/CaltexPhilippines", scrapeMode: "dynamic_browser", parserId: "fb_public_page_v1" },
   { id: "seaoil_fb", sourceType: "company_advisory", sourceName: "SeaOil (Facebook)", url: "https://www.facebook.com/seaoilphilippines", scrapeMode: "dynamic_browser", parserId: "fb_public_page_v1" },
   { id: "phoenix_fb", sourceType: "company_advisory", sourceName: "Phoenix (Facebook)", url: "https://www.facebook.com/PhoenixPetroleum", scrapeMode: "dynamic_browser", parserId: "fb_public_page_v1" },
-  { id: "doe_fb", sourceType: "official_local", sourceName: "DOE (Facebook)", url: "https://www.facebook.com/DOEPhilippines", scrapeMode: "dynamic_browser", parserId: "fb_public_page_v1" },
-
+  {
+    id: "doe_fb",
+    sourceType: "official_local",
+    sourceName: "DOE (Facebook)",
+    url: "https://www.facebook.com/DOEPhilippines",
+    scrapeMode: "dynamic_browser",
+    parserId: "ai_groq_v1",
+  },
   // NEWS (advisory corroboration)
-  { id: "gma_news", sourceType: "company_advisory", sourceName: "GMA News", url: "https://www.gmanetwork.com/news/", scrapeMode: "static_html", parserId: "news_generic_v1" },
-  { id: "abs_cbn_news", sourceType: "company_advisory", sourceName: "ABS-CBN News", url: "https://news.abs-cbn.com", scrapeMode: "static_html", parserId: "news_generic_v1" },
-  { id: "philstar", sourceType: "company_advisory", sourceName: "Philstar", url: "https://www.philstar.com", scrapeMode: "static_html", parserId: "news_generic_v1" },
-  { id: "inquirer", sourceType: "company_advisory", sourceName: "Inquirer", url: "https://newsinfo.inquirer.net", scrapeMode: "static_html", parserId: "news_generic_v1" },
-  { id: "manila_bulletin", sourceType: "company_advisory", sourceName: "Manila Bulletin", url: "https://mb.com.ph", scrapeMode: "static_html", parserId: "news_generic_v1" },
+  { id: "gma_news", sourceType: "company_advisory", sourceName: "GMA News", url: "https://www.gmanetwork.com/news/", scrapeMode: "static_html", parserId: "ai_groq_v1" },
+  { id: "abs_cbn_news", sourceType: "company_advisory", sourceName: "ABS-CBN News", url: "https://news.abs-cbn.com", scrapeMode: "dynamic_browser", parserId: "ai_groq_v1" },
+  { id: "philstar", sourceType: "company_advisory", sourceName: "Philstar", url: "https://www.philstar.com", scrapeMode: "static_html", parserId: "ai_groq_v1" },
+  { id: "inquirer", sourceType: "company_advisory", sourceName: "Inquirer", url: "https://newsinfo.inquirer.net", scrapeMode: "static_html", parserId: "ai_groq_v1" },
+  { id: "manila_bulletin", sourceType: "company_advisory", sourceName: "Manila Bulletin", url: "https://mb.com.ph", scrapeMode: "static_html", parserId: "ai_groq_v1" },
 
   // OBSERVED (lower confidence)
   // Disabled for now until a dedicated `zigwheels_v1` parser is implemented.

@@ -25,6 +25,26 @@ const EnvSchema = z.object({
   SCHEDULE_PH_OBSERVED: z.string().min(1).optional(),
   SCHEDULE_RECONCILE: z.string().min(1).optional(),
   SCHEDULE_DATA_QUALITY: z.string().min(1).optional(),
+  SCHEDULE_AI_ESTIMATION: z.string().min(1).optional(),
+
+  // Groq AI
+  GROQ_API_KEY: z.string().optional(),
+  GROQ_MODEL: z.string().default("llama-3.3-70b-versatile"),
+  GROQ_FALLBACK_MODEL: z.string().default("llama-3.1-8b-instant"),
+
+  // OpenRouter (Alternative)
+  OPENROUTER_API_KEY: z.string().optional(),
+  OPENROUTER_MODEL: z.string().default("deepseek/deepseek-chat"),
+
+  // AI Provider selection: "groq", "openrouter", or "openai"
+  AI_PROVIDER: z.enum(["groq", "openrouter", "openai"]).default("groq"),
+
+  // OpenAI (Alternative)
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_MODEL: z.string().default("gpt-4o-mini"),
+
+  // Search API (Serper.dev)
+  SERPER_API_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

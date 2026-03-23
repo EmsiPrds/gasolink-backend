@@ -8,6 +8,9 @@ import { FuelTypeValues } from "../models/enums";
 import { sinceDays } from "../utils/period";
 import { PhHistoryQuerySchema, PhLatestQuerySchema } from "../validators/phValidators";
 import { z } from "zod";
+import { buildFingerprint } from "../normalization/fingerprint";
+import { httpStatus } from "../utils/httpStatus";
+import { fail } from "../utils/apiResponse";
 
 function toLegacyPhShape(p: any) {
   return {
@@ -103,6 +106,68 @@ export async function getPhObserved(req: Request, res: Response) {
 }
 
 const SourceDetailsParamSchema = z.object({ id: z.string().min(1) });
+
+const PublicReportSchema = z.object({
+  fuelType: z.enum(FuelTypeValues as any),
+  pricePerLiter: z.number().positive(),
+  region: z.string().min(1),
+  city: z.string().min(1),
+  stationName: z.string().min(1),
+  address: z.string().optional(),
+});
+
+export async function reportPublicPrice(req: Request, res: Response) {
+  try {
+    const validated = PublicReportSchema.parse(req.body);
+    const now = new Date();
+
+    const fingerprint = buildFingerprint({
+      sourceType: "observed_station",
+      sourceUrl: "public_report", // identifier for crowdsourced entries
+      fuelType: validated.fuelType,
+      region: validated.region,
+      city: validated.city.toLowerCase(),
+      stationName: validated.stationName.toLowerCase(),
+      pricePerLiter: validated.pricePerLiter,
+      scrapedAt: now.toISOString().split("T")[0], // one per day per unique combination
+    });
+
+    const record = await NormalizedFuelRecord.findOneAndUpdate(
+      { fingerprint },
+      {
+        $setOnInsert: {
+          sourceType: "observed_station",
+          statusLabel: "Observed",
+          confidenceScore: 0.5, // Base confidence for anonymous public reports
+          fuelType: validated.fuelType,
+          region: validated.region,
+          city: validated.city,
+          stationName: validated.stationName,
+          pricePerLiter: validated.pricePerLiter,
+          currency: "PHP",
+          sourceName: `User Report: ${validated.stationName}`,
+          sourceUrl: "public_report",
+           scrapedAt: now,
+           fingerprint,
+         },
+       },
+      { upsert: true, new: true },
+    );
+
+    return res.status(httpStatus.created).json(ok({ record }));
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(httpStatus.badRequest).json(
+        fail({
+          code: "VALIDATION_ERROR",
+          message: "Invalid report data",
+          details: err.flatten(),
+        }),
+      );
+    }
+    throw err;
+  }
+}
 
 export async function getPhSourceDetails(req: Request, res: Response) {
   const { id } = SourceDetailsParamSchema.parse(req.params);

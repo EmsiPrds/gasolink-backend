@@ -11,6 +11,7 @@ import { NormalizedFuelRecord } from "../models/NormalizedFuelRecord";
 import { FinalPublishedFuelPrice } from "../models/FinalPublishedFuelPrice";
 import { refreshGlobalPrices } from "../services/globalPriceService";
 import { MockGlobalPriceProvider } from "../services/providers/MockGlobalPriceProvider";
+import { runAiSearchDataGathering } from "../jobs/aiSearchJob";
 import { collectorsQueue, qualityQueue, reconcileQueue } from "../queue/queues";
 import {
   AdminAlertBodySchema,
@@ -232,8 +233,9 @@ export async function listPublishedPrices(_req: Request, res: Response) {
 }
 
 export async function triggerCollectors(_req: Request, res: Response) {
-  await collectorsQueue.add("manual_collectors", {}, { jobId: `manual_collectors_${Date.now()}` });
-  return res.json(ok({ requested: true }));
+  // Instead of traditional collectors, we trigger the AI search gathering.
+  runAiSearchDataGathering().catch((err) => console.error("Manual AI search trigger failed:", err));
+  return res.json(ok({ requested: true, message: "AI search data gathering triggered." }));
 }
 
 export async function triggerReconcile(_req: Request, res: Response) {
