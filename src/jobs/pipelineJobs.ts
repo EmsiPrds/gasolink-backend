@@ -1,25 +1,20 @@
 import cron from "node-cron";
 import { env } from "../config/env";
-import { collectorsQueue, qualityQueue, reconcileQueue } from "../queue/queues";
+import { collectorsQueue, qualityQueue, reconcileQueue, aiEstimationQueue } from "../queue/queues";
+import { runAiSearchDataGathering } from "./aiSearchJob";
 
 export function startPipelineJobs() {
-  const official = env.SCHEDULE_PH_OFFICIAL ?? "15 */1 * * *"; // every hour at minute 15
-  const company = env.SCHEDULE_PH_COMPANY ?? "*/30 * * * *"; // every 30 minutes
-  const observed = env.SCHEDULE_PH_OBSERVED ?? "45 */1 * * *"; // every hour at minute 45
+  // Weekly on Mondays at 4:00 PM (16:00) - Philippine fuel price adjustments are typically announced then.
+  const aiSearchSchedule = env.SCHEDULE_PH_OFFICIAL ?? "0 16 * * 1";
   const reconcile = env.SCHEDULE_RECONCILE ?? "*/10 * * * *"; // every 10 minutes
   const quality = env.SCHEDULE_DATA_QUALITY ?? "*/15 * * * *"; // every 15 minutes
+  const aiEstimation = env.SCHEDULE_AI_ESTIMATION ?? "0 */2 * * *"; // every 2 hours at minute 0
 
-  // For now all collectors run together; sources registry decides which ones exist.
-  cron.schedule(official, async () => {
-    await collectorsQueue.add("official_collect", {}, { jobId: `official_${Date.now()}` });
-  });
-
-  cron.schedule(company, async () => {
-    await collectorsQueue.add("company_collect", {}, { jobId: `company_${Date.now()}` });
-  });
-
-  cron.schedule(observed, async () => {
-    await collectorsQueue.add("observed_collect", {}, { jobId: `observed_${Date.now()}` });
+  // The primary data gathering is now AI-driven search.
+  // Traditional scrapers/collectors are disabled to simplify the process.
+  cron.schedule(aiSearchSchedule, async () => {
+    console.log("Triggering scheduled AI search data gathering...");
+    await runAiSearchDataGathering();
   });
 
   cron.schedule(reconcile, async () => {
@@ -28,6 +23,10 @@ export function startPipelineJobs() {
 
   cron.schedule(quality, async () => {
     await qualityQueue.add("quality", {}, { jobId: `quality_${Date.now()}` });
+  });
+
+  cron.schedule(aiEstimation, async () => {
+    await aiEstimationQueue.add("ai-estimation", {}, { jobId: `ai_est_${Date.now()}` });
   });
 }
 

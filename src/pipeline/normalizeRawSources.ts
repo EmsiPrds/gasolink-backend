@@ -4,20 +4,23 @@ import { parsers } from "../parsers";
 import { buildFingerprint } from "../normalization/fingerprint";
 import { UpdateLog } from "../models/UpdateLog";
 import { validateCandidate } from "../normalization/validators";
-import { fetchStatic } from "../scrapers/httpFetch";
+import { fetchStatic } from "../utils/http";
 
 export async function normalizePendingRawSources(params?: { limit?: number }) {
   const limit = params?.limit ?? 50;
+  const now = new Date();
+  const from = new Date(now.getTime() - 24 * 60 * 60 * 1000); // Only process raw sources from last 24h by default
+
   const pending = await RawScrapedSource.find({
     $or: [
-      // Normal flow: only untouched raw placeholders.
-      { processingStatus: "raw" },
+      // Normal flow: only untouched raw placeholders from the last 24h.
+      { processingStatus: "raw", scrapedAt: { $gte: from } },
 
       // Retry fail-closed errors that are known to be parser/regex related.
-      // This prevents "Raw failed" from staying stuck after we improve parsing logic.
       {
         processingStatus: "failed",
         parserId: "doe_pdf_v1",
+        scrapedAt: { $gte: from },
         errorMessage: {
           $regex: "(expected fuel patterns|no fuel prices/deltas extracted)",
           $options: "i",
@@ -34,7 +37,8 @@ export async function normalizePendingRawSources(params?: { limit?: number }) {
   for (const raw of pending) {
     // Many RawScrapedSource rows are created as placeholders (discovered URLs).
     // Fetch content here if missing so parsing can proceed.
-    if (!raw.rawHtml && !raw.rawText) {
+    // Skip PDF sources: they are handled by extractPdfText inside the doePdfParser itself.
+    if (!raw.rawHtml && !raw.rawText && raw.parserId !== "doe_pdf_v1") {
       try {
         const fetched = await fetchStatic(raw.sourceUrl);
         if (fetched.status >= 200 && fetched.status < 300) {
@@ -102,7 +106,6 @@ export async function normalizePendingRawSources(params?: { limit?: number }) {
             ...validated,
             fingerprint,
             rawSourceId: raw._id,
-            updatedAt: validated.scrapedAt,
           },
         },
         { upsert: true },

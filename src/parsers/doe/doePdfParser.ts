@@ -54,7 +54,7 @@ function extractNumberAfter(label: string, text: string): number | null {
   const directMatch = text.match(directRe);
   if (directMatch) {
     const n = Number(directMatch[1]);
-    if (Number.isFinite(n)) return n;
+    if (Number.isFinite(n) && n > 0 && n < 200) return n;
   }
 
   // Fallback for DOE summary tables like:
@@ -65,8 +65,14 @@ function extractNumberAfter(label: string, text: string): number | null {
     if (!labelRe.test(line)) continue;
     const nums = line.match(/([0-9]+(?:\.[0-9]+)?)/g);
     if (!nums || nums.length === 0) continue;
-    const last = Number(nums[nums.length - 1]);
-    if (Number.isFinite(last)) return last;
+    // We expect the common/average price to be within a sane range.
+    // If multiple numbers are on the line, iterate backwards to find a sane price.
+    for (let i = nums.length - 1; i >= 0; i--) {
+      const val = Number(nums[i]);
+      if (Number.isFinite(val) && val > 30 && val < 150) {
+        return val;
+      }
+    }
   }
 
   return null;
@@ -127,7 +133,7 @@ export const doePdfParser: SourceParser = {
     }
 
     // Try to infer effectivity from text (e.g. "effective March 19, 2026").
-    const effectiveAt = extractEffectivity(normalized) ?? undefined;
+    const effectiveAt = extractEffectivity(normalized);
 
     // Try to infer region from PDF text first.
     let region: "NCR" | "Luzon" | "Visayas" | "Mindanao" | null =

@@ -1,5 +1,5 @@
 import fs from "fs/promises";
-import { fetchBinary } from "../scrapers/httpFetch";
+import { fetchBinary } from "../utils/http";
 import { UpdateLog } from "../models/UpdateLog";
 import { PDFParse } from "pdf-parse";
 

@@ -7,6 +7,7 @@ import { doeNoticesAliasParser, doeServicesAliasParser } from "./doe/doeAliasPar
 import { companyGenericParser } from "./company/companyGenericParser";
 import { newsGenericParser } from "./news/newsGenericParser";
 import { fbPublicPageParser } from "./fb/fbPublicPageParser";
+import { groqParser } from "./ai/groqParser";
 
 // Register real parsers here as you add source-specific implementations.
 export const parsers: SourceParser[] = [
@@ -18,6 +19,7 @@ export const parsers: SourceParser[] = [
   companyGenericParser,
   newsGenericParser,
   fbPublicPageParser,
+  groqParser,
   noopParser,
 ];
 

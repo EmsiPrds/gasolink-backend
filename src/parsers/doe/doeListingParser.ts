@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import type { SourceParser } from "../parserTypes";
 import { RawScrapedSource } from "../../models/RawScrapedSource";
+import { discoverLatestLinksWithAi } from "../../services/aiService";
 
 function absolutize(baseUrl: string, href: string): string {
   try {
@@ -45,26 +46,31 @@ export const doeListingParser: SourceParser = {
     const html = raw.rawHtml ?? "";
     if (!html) return { ok: false, error: "No HTML to parse" };
 
-    const $ = cheerio.load(html);
-    const links = new Set<string>();
+    // Use AI to find the LATEST links on the page.
+    const aiResult = await discoverLatestLinksWithAi(raw.sourceUrl, html);
+    const discovered = new Set<string>();
 
-    $("a[href]").each((_, el) => {
-      const href = String($(el).attr("href") ?? "").trim();
-      if (!href) return;
-      const abs = absolutize(raw.sourceUrl, href);
-      if (isProbablyDoePdfUrl(abs)) links.add(abs);
-    });
+    if (aiResult && aiResult.links.length > 0) {
+      for (const link of aiResult.links) {
+        if (link.isLatest) discovered.add(absolutize(raw.sourceUrl, link.url));
+      }
+    } else {
+      // Fallback to regex discovery if AI fails or returns nothing.
+      const $ = cheerio.load(html);
+      $("a[href]").each((_, el) => {
+        const href = String($(el).attr("href") ?? "").trim();
+        if (!href) return;
+        const abs = absolutize(raw.sourceUrl, href);
+        if (isProbablyDoePdfUrl(abs)) discovered.add(abs);
+      });
 
-    // Also scan for any standalone PDF references in the HTML body.
-    // Some DOE pages may not include standard <a href> tags or may embed PDF links in scripts.
-    const pdfMatches = html.matchAll(/(https?:\/\/[^"'\s>]+\.pdf)/gi);
-    for (const match of pdfMatches) {
-      links.add(String(match[1]));
+      const pdfMatches = html.matchAll(/(https?:\/\/[^"'\s>]+\.pdf)/gi);
+      for (const match of pdfMatches) {
+        discovered.add(String(match[1]));
+      }
     }
 
-    const discovered = Array.from(links);
-
-    if (discovered.length === 0) {
+    if (discovered.size === 0) {
       return { ok: true, items: [] };
     }
 
@@ -72,7 +78,15 @@ export const doeListingParser: SourceParser = {
 
     // Enqueue all discovered PDF links, but avoid duplicates.
     for (const url of discovered) {
-      const abs = absolutize(raw.sourceUrl, url);
+      const abs = url; // already absolute
+      
+      // RECENCY CHECK: Ignore links that are clearly old based on the URL.
+      const dateMs = extractDateFromDoeUrl(abs);
+      if (dateMs > 0) {
+        const date = new Date(dateMs);
+        if (date.getUTCFullYear() < 2025) continue;
+      }
+
       // Upsert to avoid duplicate work; keep first seen record.
       await RawScrapedSource.updateOne(
         { sourceUrl: abs, parserId: "doe_pdf_v1" },
