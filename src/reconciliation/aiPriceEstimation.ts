@@ -4,7 +4,6 @@ import { GlobalPrice } from "../models/GlobalPrice";
 import { refinePriceWithAi } from "../services/aiService";
 import { FuelTypeValues, RegionValues } from "../models/enums";
 import { UpdateLog } from "../models/UpdateLog";
-import { buildFingerprint } from "../normalization/fingerprint";
 
 export async function runAiPriceEstimation() {
   const now = new Date();

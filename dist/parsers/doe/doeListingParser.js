@@ -36,6 +36,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.doeListingParser = void 0;
 const cheerio = __importStar(require("cheerio"));
 const RawScrapedSource_1 = require("../../models/RawScrapedSource");
+const aiService_1 = require("../../services/aiService");
+const dateInference_1 = require("./dateInference");
+const constants_1 = require("./constants");
 function absolutize(baseUrl, href) {
     try {
         return new URL(href, baseUrl).toString();
@@ -49,22 +52,55 @@ function isProbablyDoePdfUrl(url) {
         url.includes("prod-cms.doe.gov.ph/documents") ||
         url.toLowerCase().endsWith(".pdf"));
 }
-function extractDateFromDoeUrl(url) {
-    // Examples we might see in hrefs:
-    // - .../2026-03-19...pdf
-    // - .../2026_03_19...pdf
-    // - .../20260319...pdf
-    const m1 = url.match(/(20\d{2})[-_\/](\d{2})[-_\/](\d{2})/);
-    if (m1) {
-        const d = Date.parse(`${m1[1]}-${m1[2]}-${m1[3]}T00:00:00Z`);
-        return Number.isFinite(d) ? d : 0;
+function buildRecentCutoff(now) {
+    return new Date(now.getTime() - 400 * 24 * 60 * 60 * 1000);
+}
+function discoverDoeLinksFromStructuredTable(html, baseUrl) {
+    const $ = cheerio.load(html);
+    const discovered = new Map();
+    $("tr").each((_, row) => {
+        const yearText = $(row).find("h2").first().text().trim();
+        const fallbackYear = Number(yearText);
+        const year = Number.isFinite(fallbackYear) && fallbackYear >= 2000 ? fallbackYear : null;
+        $(row)
+            .find("a[href]")
+            .each((__, anchor) => {
+            const href = String($(anchor).attr("href") ?? "").trim();
+            if (!href)
+                return;
+            const abs = absolutize(baseUrl, href);
+            if (!isProbablyDoePdfUrl(abs))
+                return;
+            const label = $(anchor).text().replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
+            const publishedAt = (0, dateInference_1.inferDoeDocumentDateFromLabel)(label, year) ?? (0, dateInference_1.inferDoeDocumentDateFromUrl)(abs);
+            discovered.set(abs, publishedAt);
+        });
+    });
+    return Array.from(discovered.entries()).map(([url, publishedAt]) => ({ url, publishedAt }));
+}
+function discoverDoeLinksFallback(html, baseUrl) {
+    const $ = cheerio.load(html);
+    const discovered = new Map();
+    $("a[href]").each((_, el) => {
+        const href = String($(el).attr("href") ?? "").trim();
+        if (!href)
+            return;
+        const abs = absolutize(baseUrl, href);
+        if (!isProbablyDoePdfUrl(abs))
+            return;
+        const label = $(el).text().replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
+        const publishedAt = (0, dateInference_1.inferDoeDocumentDateFromLabel)(label, null) ?? (0, dateInference_1.inferDoeDocumentDateFromUrl)(abs);
+        discovered.set(abs, publishedAt);
+    });
+    const pdfMatches = html.matchAll(/(https?:\/\/[^"'\s>]+(?:\.pdf|\/documents\/d\/guest\/[^"'\s>]+))/gi);
+    for (const match of pdfMatches) {
+        const abs = absolutize(baseUrl, String(match[1]));
+        if (!isProbablyDoePdfUrl(abs))
+            continue;
+        const publishedAt = (0, dateInference_1.inferDoeDocumentDateFromUrl)(abs);
+        discovered.set(abs, publishedAt);
     }
-    const m2 = url.match(/(20\d{2})(\d{2})(\d{2})/);
-    if (m2) {
-        const d = Date.parse(`${m2[1]}-${m2[2]}-${m2[3]}T00:00:00Z`);
-        return Number.isFinite(d) ? d : 0;
-    }
-    return 0;
+    return Array.from(discovered.entries()).map(([url, publishedAt]) => ({ url, publishedAt }));
 }
 exports.doeListingParser = {
     id: "doe_listing_v1",
@@ -73,37 +109,48 @@ exports.doeListingParser = {
         const html = raw.rawHtml ?? "";
         if (!html)
             return { ok: false, error: "No HTML to parse" };
-        const $ = cheerio.load(html);
-        const links = new Set();
-        $("a[href]").each((_, el) => {
-            const href = String($(el).attr("href") ?? "").trim();
-            if (!href)
-                return;
-            const abs = absolutize(raw.sourceUrl, href);
-            if (isProbablyDoePdfUrl(abs))
-                links.add(abs);
-        });
-        // Also scan for any standalone PDF references in the HTML body.
-        // Some DOE pages may not include standard <a href> tags or may embed PDF links in scripts.
-        const pdfMatches = html.matchAll(/(https?:\/\/[^"'\s>]+\.pdf)/gi);
-        for (const match of pdfMatches) {
-            links.add(String(match[1]));
+        let discovered = discoverDoeLinksFromStructuredTable(html, raw.sourceUrl);
+        if (discovered.length === 0) {
+            discovered = discoverDoeLinksFallback(html, raw.sourceUrl);
         }
-        const discovered = Array.from(links);
+        // Only ask AI for help if deterministic discovery found nothing.
+        if (discovered.length === 0) {
+            const aiResult = await (0, aiService_1.discoverLatestLinksWithAi)(raw.sourceUrl, html);
+            if (aiResult && aiResult.links.length > 0) {
+                for (const link of aiResult.links) {
+                    if (!link.isLatest)
+                        continue;
+                    const url = absolutize(raw.sourceUrl, link.url);
+                    discovered.push({
+                        url,
+                        publishedAt: (0, dateInference_1.inferDoeDocumentDateFromUrl)(url),
+                    });
+                }
+            }
+        }
         if (discovered.length === 0) {
             return { ok: true, items: [] };
         }
         const now = new Date();
-        // Enqueue all discovered PDF links, but avoid duplicates.
-        for (const url of discovered) {
-            const abs = absolutize(raw.sourceUrl, url);
-            // Upsert to avoid duplicate work; keep first seen record.
-            await RawScrapedSource_1.RawScrapedSource.updateOne({ sourceUrl: abs, parserId: "doe_pdf_v1" }, {
+        const recentCutoff = buildRecentCutoff(now);
+        const recentDocs = discovered
+            .filter((doc) => !doc.publishedAt || doc.publishedAt >= recentCutoff)
+            .sort((a, b) => {
+            const at = a.publishedAt ? a.publishedAt.getTime() : 0;
+            const bt = b.publishedAt ? b.publishedAt.getTime() : 0;
+            return bt - at;
+        })
+            .slice(0, 16);
+        for (const doc of recentDocs) {
+            await RawScrapedSource_1.RawScrapedSource.updateOne({ sourceUrl: doc.url, parserId: constants_1.DOE_PDF_PARSER_ID }, {
+                $set: {
+                    sourcePublishedAt: doc.publishedAt ?? undefined,
+                },
                 $setOnInsert: {
                     sourceType: raw.sourceType,
                     sourceName: raw.sourceName,
-                    sourceUrl: abs,
-                    parserId: "doe_pdf_v1",
+                    sourceUrl: doc.url,
+                    parserId: constants_1.DOE_PDF_PARSER_ID,
                     scrapedAt: now,
                     parserVersion: raw.parserVersion,
                     processingStatus: "raw",

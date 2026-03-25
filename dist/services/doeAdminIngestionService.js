@@ -13,9 +13,10 @@ const NormalizedFuelRecord_1 = require("../models/NormalizedFuelRecord");
 const UpdateLog_1 = require("../models/UpdateLog");
 const pdfTextService_1 = require("./pdfTextService");
 const doePdfParser_1 = require("../parsers/doe/doePdfParser");
-const httpFetch_1 = require("../scrapers/httpFetch");
+const http_1 = require("../utils/http");
 const fingerprint_1 = require("../normalization/fingerprint");
 const validators_1 = require("../normalization/validators");
+const constants_1 = require("../parsers/doe/constants");
 async function createDoeRawFromUpload(params) {
     const sourceUrl = `local:${path_1.default.basename(params.originalFilename)}`;
     const textResult = await (0, pdfTextService_1.extractPdfText)({ localPath: params.localPath });
@@ -32,7 +33,7 @@ async function createDoeRawFromUpload(params) {
         sourceType: "official_local",
         sourceName: "DOE",
         sourceUrl,
-        parserId: "doe_pdf_v1",
+        parserId: constants_1.DOE_PDF_PARSER_ID,
         rawText: textResult.text,
         scrapedAt: new Date(),
         parserVersion: "v1",
@@ -67,7 +68,7 @@ async function createDoeRawFromLink(params) {
         text = textResult.text;
     }
     else {
-        const fetched = await (0, httpFetch_1.fetchStatic)(url);
+        const fetched = await (0, http_1.fetchStatic)(url);
         if (fetched.status < 200 || fetched.status >= 300) {
             throw new Error(`HTTP ${fetched.status} for DOE URL ${url}`);
         }
@@ -96,7 +97,7 @@ async function createDoeRawFromLink(params) {
         sourceType: "official_local",
         sourceName: "DOE",
         sourceUrl: finalPdfUrl,
-        parserId: "doe_pdf_v1",
+        parserId: constants_1.DOE_PDF_PARSER_ID,
         rawText: text,
         scrapedAt: new Date(),
         parserVersion: "v1",
@@ -185,6 +186,7 @@ async function commitDoePreview(params) {
             supportingSources: [],
         });
         const fingerprint = (0, fingerprint_1.buildFingerprint)({
+            sourceType: validated.sourceType,
             sourceUrl: validated.sourceUrl,
             sourcePublishedAt: validated.sourcePublishedAt ? validated.sourcePublishedAt.toISOString() : "",
             fuelType: validated.fuelType,

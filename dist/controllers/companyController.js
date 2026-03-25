@@ -23,7 +23,7 @@ async function getCompanyPrices(req, res) {
             _id: p._id,
             companyName: p.companyName ?? "Unknown",
             fuelType: p.fuelType,
-            price: typeof p.finalPrice === "number" ? p.finalPrice : 0,
+            price: typeof p.finalPrice === "number" ? p.finalPrice : null,
             region: p.region,
             city: p.city,
             status: p.finalStatus,

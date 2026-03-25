@@ -214,8 +214,8 @@ async function listPublishedPrices(_req, res) {
     return res.json((0, apiResponse_1.ok)({ items }));
 }
 async function triggerCollectors(_req, res) {
-    await queues_1.collectorsQueue.add("manual_collectors", {}, { jobId: `manual_collectors_${Date.now()}` });
-    return res.json((0, apiResponse_1.ok)({ requested: true }));
+    await queues_1.collectorsQueue.add("manual_collect", {}, { jobId: `manual_collect_${Date.now()}` });
+    return res.json((0, apiResponse_1.ok)({ requested: true, message: "Accuracy-first source collection queued." }));
 }
 async function triggerReconcile(_req, res) {
     await queues_1.reconcileQueue.add("manual_reconcile", {}, { jobId: `manual_reconcile_${Date.now()}` });

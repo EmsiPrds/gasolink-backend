@@ -1,11 +1,11 @@
 import { Worker } from "bullmq";
 import { redisConnection } from "./redis";
-import { runAiSearchDataGathering } from "../jobs/aiSearchJob";
+import { runAccuracyFirstCollection } from "../jobs/accuracyCollectionJob";
 import { reconcileFuelRecords } from "../reconciliation/reconcileFuelRecords";
 import { runAiPriceEstimation } from "../reconciliation/aiPriceEstimation";
 import { runDataQualityMonitor } from "../quality/dataQualityMonitor";
 import { UpdateLog } from "../models/UpdateLog";
-import { normalizePendingRawSources } from "../pipeline/normalizeRawSources";
+import { drainPendingRawSources } from "../pipeline/normalizeRawSources";
 
 const connection = redisConnection();
 
@@ -14,8 +14,25 @@ export function startWorkers() {
   new Worker(
     "collectors",
     async () => {
-      await runAiSearchDataGathering();
-      await normalizePendingRawSources({ limit: 100 });
+      try {
+        const collection = await runAccuracyFirstCollection();
+        const reconcileResult = await reconcileFuelRecords();
+        await UpdateLog.create({
+          module: "collectors",
+          status: "success",
+          message: `Collectors finished. officialCreated=${collection.officialCollection.created} officialSkipped=${collection.officialCollection.skippedUnchanged} normalized=${collection.normalization.normalized} failed=${collection.normalization.failed} reconciled=${reconcileResult.upserted} aiFallback=${collection.aiFallback.ran ? "yes" : "no"}`,
+          timestamp: new Date(),
+        }).catch(() => {});
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await UpdateLog.create({
+          module: "collectors",
+          status: "failure",
+          message: `Collectors failed: ${message}`,
+          timestamp: new Date(),
+        }).catch(() => {});
+        throw error;
+      }
     },
     { connection },
   );
@@ -24,7 +41,7 @@ export function startWorkers() {
   new Worker(
     "reconcile",
     async () => {
-      await normalizePendingRawSources({ limit: 200 });
+      await drainPendingRawSources({ limitPerPass: 150, maxPasses: 6 });
       await reconcileFuelRecords();
     },
     { connection },
@@ -55,4 +72,3 @@ export function startWorkers() {
     timestamp: new Date(),
   }).catch(() => {});
 }
-

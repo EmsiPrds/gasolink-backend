@@ -39,30 +39,26 @@ function extractFuelDeltas(text) {
     return Array.from(byFuel.entries()).map(([fuelType, delta]) => ({ fuelType, delta }));
 }
 function extractEffectivity(text) {
-    // Best-effort: recognize common PH news formats; fail closed if not found.
-    // Examples: "effective March 19, 2026", "effective on Mar. 19, 2026 6:00 AM"
-    const re = /(effective(?:\s+on)?|takes?\s+effect(?:\s+on)?)\s+([A-Za-z]{3,9}\.?\s+\d{1,2},\s+\d{4})(?:\s+at\s+(\d{1,2}:\d{2})\s*(AM|PM))?/i;
-    const m = text.match(re);
-    if (!m)
-        return null;
-    const datePart = m[2];
-    const timePart = m[3];
-    const ampm = m[4];
-    const base = new Date(datePart);
-    if (!Number.isFinite(base.getTime()))
-        return null;
-    if (timePart && ampm) {
-        const [hhStr, mmStr] = timePart.split(":");
-        let hh = Number(hhStr);
-        const mm = Number(mmStr);
-        if (!Number.isFinite(hh) || !Number.isFinite(mm))
-            return base;
-        const upper = ampm.toUpperCase();
-        if (upper === "PM" && hh < 12)
-            hh += 12;
-        if (upper === "AM" && hh === 12)
-            hh = 0;
-        base.setHours(hh, mm, 0, 0);
+    const months = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ];
+    const monthPattern = months.join("|");
+    // Pattern: "effective 05:00 a.m. of 23 March 2026"
+    const re1 = new RegExp(`effective.*?([0-9]{1,2})\\s+(${monthPattern})\\s+([0-9]{4})`, "i");
+    const m1 = text.match(re1);
+    if (m1) {
+        const d = Date.parse(`${m1[1]} ${m1[2]} ${m1[3]} UTC`);
+        if (Number.isFinite(d))
+            return new Date(d);
     }
-    return base;
+    // Pattern: "As of March 23, 2026"
+    const re2 = new RegExp(`as of\\s+(${monthPattern})\\s+([0-9]{1,2}),?\\s+([0-9]{4})`, "i");
+    const m2 = text.match(re2);
+    if (m2) {
+        const d = Date.parse(`${m2[2]} ${m2[1]} ${m2[3]} UTC`);
+        if (Number.isFinite(d))
+            return new Date(d);
+    }
+    return null;
 }

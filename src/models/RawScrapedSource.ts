@@ -12,6 +12,8 @@ const RawScrapedSourceSchema = new Schema(
     rawHtml: { type: String },
     rawText: { type: String },
     rawFilePath: { type: String, trim: true },
+    contentHash: { type: String, trim: true, index: true },
+    sourcePublishedAt: { type: Date, index: true },
 
     scrapedAt: { type: Date, required: true, default: () => new Date(), index: true },
     parserVersion: { type: String, required: true, default: "v1", index: true },
@@ -45,4 +47,3 @@ RawScrapedSourceSchema.index({ parserId: 1, scrapedAt: -1 });
 export type RawScrapedSourceDoc = InferSchemaType<typeof RawScrapedSourceSchema>;
 
 export const RawScrapedSource = model("RawScrapedSource", RawScrapedSourceSchema);
-

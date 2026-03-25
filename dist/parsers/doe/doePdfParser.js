@@ -4,6 +4,8 @@ exports.doePdfParser = void 0;
 const confidence_1 = require("../../normalization/confidence");
 const deltaExtract_1 = require("../shared/deltaExtract");
 const pdfTextService_1 = require("../../services/pdfTextService");
+const dateInference_1 = require("./dateInference");
+const constants_1 = require("./constants");
 function escapeRegex(s) {
     return s.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&");
 }
@@ -12,10 +14,9 @@ function normalizePdfText(text) {
     // Normalize before running regex-based extraction.
     let t = text.replace(/\r\n?/g, "\n");
     t = t.replace(/\u00A0/g, " ");
-    t = t.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+    // Preserve newlines so table rows can still be parsed line by line.
+    t = t.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "");
     t = t.replace(/[ \t]+/g, " ");
-    // Fix cases like "7 7 . 0 0" => "77.00"
-    t = t.replace(/(\d)\s+(?=\d)/g, "$1");
     return t.trim();
 }
 /**
@@ -47,7 +48,7 @@ function extractNumberAfter(label, text) {
     const directMatch = text.match(directRe);
     if (directMatch) {
         const n = Number(directMatch[1]);
-        if (Number.isFinite(n))
+        if (Number.isFinite(n) && n > 0 && n < 200)
             return n;
     }
     // Fallback for DOE summary tables like:
@@ -60,9 +61,14 @@ function extractNumberAfter(label, text) {
         const nums = line.match(/([0-9]+(?:\.[0-9]+)?)/g);
         if (!nums || nums.length === 0)
             continue;
-        const last = Number(nums[nums.length - 1]);
-        if (Number.isFinite(last))
-            return last;
+        // We expect the common/average price to be within a sane range.
+        // If multiple numbers are on the line, iterate backwards to find a sane price.
+        for (let i = nums.length - 1; i >= 0; i--) {
+            const val = Number(nums[i]);
+            if (Number.isFinite(val) && val > 30 && val < 150) {
+                return val;
+            }
+        }
     }
     return null;
 }
@@ -93,9 +99,63 @@ function extractDeltaForFuelAny(labels, text) {
     }
     return null;
 }
+function average(values) {
+    if (values.length === 0)
+        return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+function extractCommonPricesForLinePattern(text, linePattern) {
+    const values = [];
+    for (const rawLine of text.split(/\r?\n/)) {
+        const line = rawLine.replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
+        if (!line || !linePattern.test(line))
+            continue;
+        const withoutNa = line.replace(/#N\/A/gi, "").trim();
+        const numbers = withoutNa.match(/[0-9]+(?:\.[0-9]+)?/g) ?? [];
+        if (numbers.length === 0)
+            continue;
+        for (let i = numbers.length - 1; i >= 0; i--) {
+            const candidate = Number(numbers[i]);
+            if (Number.isFinite(candidate) && candidate > 20 && candidate < 200) {
+                values.push(candidate);
+                break;
+            }
+        }
+    }
+    return values;
+}
+function extractPriceFromModernDoeTable(text, fuelType) {
+    switch (fuelType) {
+        case "Gasoline": {
+            const ron91 = extractCommonPricesForLinePattern(text, /^\s*RON\s*91\b/i);
+            if (ron91.length > 0)
+                return average(ron91);
+            const ron95 = extractCommonPricesForLinePattern(text, /^\s*RON\s*95\b/i);
+            if (ron95.length > 0)
+                return average(ron95);
+            const gasoline = extractCommonPricesForLinePattern(text, /^\s*GASOLINE\b/i);
+            if (gasoline.length > 0)
+                return average(gasoline);
+            const ron97 = extractCommonPricesForLinePattern(text, /^\s*RON\s*97\b/i);
+            if (ron97.length > 0)
+                return average(ron97);
+            return null;
+        }
+        case "Diesel": {
+            const diesel = extractCommonPricesForLinePattern(text, /^\s*DIESEL(?!\s*PLUS)\b/i);
+            return average(diesel);
+        }
+        case "Kerosene": {
+            const kerosene = extractCommonPricesForLinePattern(text, /^\s*KEROSENE\b/i);
+            return average(kerosene);
+        }
+        default:
+            return null;
+    }
+}
 exports.doePdfParser = {
-    id: "doe_pdf_v1",
-    canHandle: (raw) => raw.parserId === "doe_pdf_v1",
+    id: constants_1.DOE_PDF_PARSER_ID,
+    canHandle: (raw) => raw.parserId === constants_1.DOE_PDF_PARSER_ID || raw.parserId === "doe_pdf_v1",
     parse: async (raw) => {
         // Prefer using cached text on RawScrapedSource (e.g. admin DOE uploads),
         // and only fetch/parse the PDF again if needed.
@@ -115,7 +175,11 @@ exports.doePdfParser = {
             return { ok: false, error: "PDF parsed but content did not match expected fuel patterns" };
         }
         // Try to infer effectivity from text (e.g. "effective March 19, 2026").
-        const effectiveAt = (0, deltaExtract_1.extractEffectivity)(normalized) ?? undefined;
+        const documentDate = (0, deltaExtract_1.extractEffectivity)(normalized) ??
+            (0, dateInference_1.inferDoeDocumentDateFromText)(normalized) ??
+            (raw.sourcePublishedAt instanceof Date ? raw.sourcePublishedAt : null) ??
+            (0, dateInference_1.inferDoeDocumentDateFromUrl)(raw.sourceUrl);
+        const effectiveAt = documentDate;
         // Try to infer region from PDF text first.
         let region = /mindanao/i.test(normalized)
             ? "Mindanao"
@@ -179,22 +243,25 @@ exports.doePdfParser = {
             return { ok: true, items: [] };
         const items = [];
         // Prefer extracting actual prices if present
-        const gasPrice = extractNumberAfterAny([
-            "Gasoline",
-            "Petrol",
-            "Mogas",
-            "Gasol",
-            "Unleaded",
-            // Common DOE table labels
-            "RON 97",
-            "RON97",
-            "RON 100",
-            "RON100",
-            "RON 95",
-            "RON95",
-        ], normalized);
-        const dieselPrice = extractNumberAfterAny(["Diesel", "Gasoil", "ULSD", "Diesel (ULSD)"], normalized);
-        const keroPrice = extractNumberAfterAny(["Kerosene", "Kero", "Jet A-1"], normalized);
+        const gasPrice = extractPriceFromModernDoeTable(normalized, "Gasoline") ??
+            extractNumberAfterAny([
+                "Gasoline",
+                "Petrol",
+                "Mogas",
+                "Gasol",
+                "Unleaded",
+                // Common DOE table labels
+                "RON 97",
+                "RON97",
+                "RON 100",
+                "RON100",
+                "RON 95",
+                "RON95",
+            ], normalized);
+        const dieselPrice = extractPriceFromModernDoeTable(normalized, "Diesel") ??
+            extractNumberAfterAny(["Diesel", "Gasoil", "ULSD", "Diesel (ULSD)"], normalized);
+        const keroPrice = extractPriceFromModernDoeTable(normalized, "Kerosene") ??
+            extractNumberAfterAny(["Kerosene", "Kero", "Jet A-1"], normalized);
         const sourceType = raw.sourceType;
         const statusLabel = (0, confidence_1.statusLabelForSourceType)(sourceType);
         const confidenceScore = (0, confidence_1.confidenceForSourceType)(sourceType);
@@ -214,7 +281,7 @@ exports.doePdfParser = {
                 sourceUrl: raw.sourceUrl,
                 scrapedAt: now,
                 effectiveAt: effectiveAt ?? undefined,
-                sourcePublishedAt: effectiveAt ?? now,
+                sourcePublishedAt: documentDate ?? now,
             });
         };
         maybeAddPrice("Gasoline", gasPrice);
@@ -240,7 +307,7 @@ exports.doePdfParser = {
                     sourceUrl: raw.sourceUrl,
                     scrapedAt: now,
                     effectiveAt: effectiveAt ?? undefined,
-                    sourcePublishedAt: effectiveAt ?? now,
+                    sourcePublishedAt: documentDate ?? now,
                 });
             };
             maybeAddDelta("Gasoline", gasDelta);

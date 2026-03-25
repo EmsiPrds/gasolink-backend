@@ -14,10 +14,16 @@ export const reportPrice = async (req: Request, res: Response) => {
     }
 
     // Context for AI validation
-    const lastOfficial = await FinalPublishedFuelPrice.findOne({ fuelType }).sort({ lastVerifiedAt: -1 });
+    const lastOfficial = await FinalPublishedFuelPrice.findOne({
+      fuelType,
+      displayType: "ph_final",
+      companyName: { $in: [null, ""] },
+      city: { $in: [null, ""] },
+      finalPrice: { $ne: null },
+    }).sort({ lastVerifiedAt: -1 });
     const context = {
-        regionalAverage: lastOfficial?.averagePrice ?? 65.5,
-        lastOfficialPrice: lastOfficial?.finalPrice ?? 65.5
+        regionalAverage: lastOfficial?.averagePrice ?? lastOfficial?.finalPrice ?? price,
+        lastOfficialPrice: lastOfficial?.finalPrice ?? price
     };
 
     const aiValidation = await validateUserReportWithAi(

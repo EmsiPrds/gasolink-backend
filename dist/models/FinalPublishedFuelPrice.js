@@ -24,6 +24,7 @@ const FinalPublishedFuelPriceSchema = new mongoose_1.Schema({
     // Final value users see. For advisory-only entries, this may be null (delta only),
     // but we still publish a record with a clear finalStatus.
     finalPrice: { type: Number, min: 0 },
+    averagePrice: { type: Number, min: 0 },
     priceChange: { type: Number },
     currency: { type: String, required: true, default: "PHP" },
     supportingSources: { type: [PublishedSupportingSourceSchema], required: true, default: [] },

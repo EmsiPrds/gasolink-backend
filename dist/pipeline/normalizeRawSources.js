@@ -1,24 +1,28 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizePendingRawSources = normalizePendingRawSources;
+exports.drainPendingRawSources = drainPendingRawSources;
 const RawScrapedSource_1 = require("../models/RawScrapedSource");
 const NormalizedFuelRecord_1 = require("../models/NormalizedFuelRecord");
 const parsers_1 = require("../parsers");
 const fingerprint_1 = require("../normalization/fingerprint");
 const UpdateLog_1 = require("../models/UpdateLog");
 const validators_1 = require("../normalization/validators");
-const httpFetch_1 = require("../scrapers/httpFetch");
+const http_1 = require("../utils/http");
+const constants_1 = require("../parsers/doe/constants");
 async function normalizePendingRawSources(params) {
     const limit = params?.limit ?? 50;
+    const now = new Date();
+    const from = new Date(now.getTime() - 24 * 60 * 60 * 1000); // Only process raw sources from last 24h by default
     const pending = await RawScrapedSource_1.RawScrapedSource.find({
         $or: [
-            // Normal flow: only untouched raw placeholders.
-            { processingStatus: "raw" },
+            // Normal flow: only untouched raw placeholders from the last 24h.
+            { processingStatus: "raw", scrapedAt: { $gte: from } },
             // Retry fail-closed errors that are known to be parser/regex related.
-            // This prevents "Raw failed" from staying stuck after we improve parsing logic.
             {
                 processingStatus: "failed",
-                parserId: "doe_pdf_v1",
+                parserId: { $in: ["doe_pdf_v1", constants_1.DOE_PDF_PARSER_ID] },
+                scrapedAt: { $gte: from },
                 errorMessage: {
                     $regex: "(expected fuel patterns|no fuel prices/deltas extracted)",
                     $options: "i",
@@ -33,9 +37,10 @@ async function normalizePendingRawSources(params) {
     for (const raw of pending) {
         // Many RawScrapedSource rows are created as placeholders (discovered URLs).
         // Fetch content here if missing so parsing can proceed.
-        if (!raw.rawHtml && !raw.rawText) {
+        // Skip PDF sources: they are handled by extractPdfText inside the doePdfParser itself.
+        if (!raw.rawHtml && !raw.rawText && raw.parserId !== "doe_pdf_v1" && raw.parserId !== constants_1.DOE_PDF_PARSER_ID) {
             try {
-                const fetched = await (0, httpFetch_1.fetchStatic)(raw.sourceUrl);
+                const fetched = await (0, http_1.fetchStatic)(raw.sourceUrl);
                 if (fetched.status >= 200 && fetched.status < 300) {
                     raw.rawHtml = fetched.html;
                     raw.rawText = fetched.text;
@@ -82,6 +87,7 @@ async function normalizePendingRawSources(params) {
         for (const item of res.items) {
             const validated = (0, validators_1.validateCandidate)(item);
             const fingerprint = (0, fingerprint_1.buildFingerprint)({
+                sourceType: validated.sourceType,
                 sourceUrl: validated.sourceUrl,
                 sourcePublishedAt: validated.sourcePublishedAt ? validated.sourcePublishedAt.toISOString() : "",
                 fuelType: validated.fuelType,
@@ -96,7 +102,6 @@ async function normalizePendingRawSources(params) {
                     ...validated,
                     fingerprint,
                     rawSourceId: raw._id,
-                    updatedAt: validated.scrapedAt,
                 },
             }, { upsert: true });
             normalized += 1;
@@ -111,4 +116,22 @@ async function normalizePendingRawSources(params) {
         timestamp: new Date(),
     });
     return { processed: pending.length, normalized, failed };
+}
+async function drainPendingRawSources(params) {
+    const limitPerPass = params?.limitPerPass ?? 100;
+    const maxPasses = params?.maxPasses ?? 5;
+    let passes = 0;
+    let processed = 0;
+    let normalized = 0;
+    let failed = 0;
+    while (passes < maxPasses) {
+        const result = await normalizePendingRawSources({ limit: limitPerPass });
+        passes += 1;
+        processed += result.processed;
+        normalized += result.normalized;
+        failed += result.failed;
+        if (result.processed === 0)
+            break;
+    }
+    return { passes, processed, normalized, failed };
 }

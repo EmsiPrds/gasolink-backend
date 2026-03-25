@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.doeArticleParser = void 0;
 const cheerio = __importStar(require("cheerio"));
 const RawScrapedSource_1 = require("../../models/RawScrapedSource");
+const constants_1 = require("./constants");
 function absolutize(baseUrl, href) {
     try {
         return new URL(href, baseUrl).toString();
@@ -70,7 +71,7 @@ exports.doeArticleParser = {
                 sourceType: raw.sourceType,
                 sourceName: raw.sourceName,
                 sourceUrl: url,
-                parserId: "doe_pdf_v1",
+                parserId: constants_1.DOE_PDF_PARSER_ID,
                 scrapedAt: now,
                 parserVersion: raw.parserVersion,
                 processingStatus: "raw",

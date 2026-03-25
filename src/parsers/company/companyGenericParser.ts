@@ -7,6 +7,24 @@ import type { Region } from "../../models/enums";
 
 const regions: Region[] = ["NCR", "Luzon", "Visayas", "Mindanao"];
 
+function inferCompanyName(sourceName: string, sourceUrl: string): string | undefined {
+  const combined = `${sourceName} ${sourceUrl}`.toLowerCase();
+  const mappings: Array<[string, string]> = [
+    ["petron", "Petron"],
+    ["shell", "Shell"],
+    ["caltex", "Caltex"],
+    ["seaoil", "SeaOil"],
+    ["unioil", "Unioil"],
+    ["phoenix", "Phoenix"],
+    ["cleanfuel", "Cleanfuel"],
+    ["jetti", "Jetti"],
+    ["ptt", "PTT"],
+    ["total", "TotalEnergies"],
+  ];
+
+  return mappings.find(([keyword]) => combined.includes(keyword))?.[1];
+}
+
 export const companyGenericParser: SourceParser = {
   id: "company_generic_v1",
   canHandle: (raw) => raw.parserId === "company_generic_v1",
@@ -18,13 +36,14 @@ export const companyGenericParser: SourceParser = {
     const deltas = extractFuelDeltas(combined);
     const effectiveAt = extractEffectivity(combined);
 
-    // Fail closed: if we can't extract a delta, we don't publish.
-    if (deltas.length === 0) return { ok: true, items: [] };
+    // Fail closed: require both a delta and effectivity so old advisories do not get resurfaced.
+    if (deltas.length === 0 || !effectiveAt) return { ok: true, items: [] };
 
     const sourceType = raw.sourceType;
     const statusLabel = statusLabelForSourceType(sourceType);
     const confidenceScore = confidenceForSourceType(sourceType);
     const scrapedAt = raw.scrapedAt ?? new Date();
+    const companyName = inferCompanyName(raw.sourceName, raw.sourceUrl);
 
     const items: NormalizedCandidate[] = [];
     for (const r of regions) {
@@ -35,13 +54,14 @@ export const companyGenericParser: SourceParser = {
           confidenceScore,
           fuelType: d.fuelType,
           region: r,
+          companyName,
           priceChange: d.delta,
           currency: "PHP",
           sourceName: raw.sourceName,
           sourceUrl: raw.sourceUrl,
           scrapedAt,
-          effectiveAt: effectiveAt ?? undefined,
-          sourcePublishedAt: effectiveAt ?? undefined,
+          effectiveAt,
+          sourcePublishedAt: effectiveAt,
         });
       }
     }
@@ -49,4 +69,3 @@ export const companyGenericParser: SourceParser = {
     return { ok: true, items };
   },
 };
-

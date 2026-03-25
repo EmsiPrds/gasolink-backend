@@ -7,21 +7,21 @@ import type { SourceDefinition } from "./types";
  * This registry is intentionally config-driven so you can tighten/expand the list safely.
  */
 export const sources: SourceDefinition[] = [
-  // OFFICIAL (highest confidence) — DOE
+  // OFFICIAL (highest confidence) - DOE
   {
     id: "doe_oil_monitor_listing",
     sourceType: "official_local",
     sourceName: "DOE Oil Monitor (listing)",
-    url: "https://doe.gov.ph/articles/group/liquid-fuels?category=Oil%20Monitor&display_type=Card",
-    scrapeMode: "dynamic_browser",
+    url: "https://doe.gov.ph/site/oimb/articles/group/liquid-fuels?category=Oil+Monitor&display_type=Card",
+    scrapeMode: "static_html",
     parserId: "doe_listing_v1",
   },
   {
     id: "doe_price_adjustments_listing",
     sourceType: "official_local",
-    sourceName: "DOE Retail Pump Prices – Price Adjustments (listing)",
-    url: "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=Price%20Adjustments&display_type=Card",
-    scrapeMode: "dynamic_browser",
+    sourceName: "DOE Retail Pump Prices - Price Adjustments (listing)",
+    url: "https://doe.gov.ph/articles/group/liquid-fuels?display_type=Card&maincat=Retail+Pump+Prices&subcategory=Price+Adjustments",
+    scrapeMode: "static_html",
     parserId: "doe_listing_v1",
   },
   {
@@ -65,7 +65,7 @@ export const sources: SourceDefinition[] = [
     parserId: "doe_listing_v1",
   },
 
-  // COMPANY ADVISORY (medium-high confidence) — replace with official company advisory pages.
+  // COMPANY ADVISORY (medium-high confidence) - replace with official company advisory pages.
   { id: "petron_site", sourceType: "company_advisory", sourceName: "Petron (site)", url: "https://www.petron.com", scrapeMode: "static_html", parserId: "company_generic_v1" },
   { id: "shell_site", sourceType: "company_advisory", sourceName: "Shell PH (site)", url: "https://www.shell.com.ph", scrapeMode: "static_html", parserId: "company_generic_v1" },
   { id: "caltex_site", sourceType: "company_advisory", sourceName: "Caltex PH (site)", url: "https://www.caltex.com/ph", scrapeMode: "static_html", parserId: "company_generic_v1" },
@@ -91,6 +91,7 @@ export const sources: SourceDefinition[] = [
     scrapeMode: "dynamic_browser",
     parserId: "ai_groq_v1",
   },
+
   // NEWS (advisory corroboration)
   { id: "gma_news", sourceType: "company_advisory", sourceName: "GMA News", url: "https://www.gmanetwork.com/news/", scrapeMode: "static_html", parserId: "ai_groq_v1" },
   { id: "abs_cbn_news", sourceType: "company_advisory", sourceName: "ABS-CBN News", url: "https://news.abs-cbn.com", scrapeMode: "dynamic_browser", parserId: "ai_groq_v1" },
@@ -102,4 +103,3 @@ export const sources: SourceDefinition[] = [
   // Disabled for now until a dedicated `zigwheels_v1` parser is implemented.
   // { id: "zigwheels_fuel_price", sourceType: "observed_station", sourceName: "Zigwheels PH fuel price", url: "https://www.zigwheels.ph/fuel-price", scrapeMode: "static_html", parserId: "zigwheels_v1" },
 ];
-

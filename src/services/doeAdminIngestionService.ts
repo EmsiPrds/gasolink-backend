@@ -8,6 +8,7 @@ import { doePdfParser } from "../parsers/doe/doePdfParser";
 import { fetchStatic } from "../utils/http";
 import { buildFingerprint } from "../normalization/fingerprint";
 import { validateCandidate } from "../normalization/validators";
+import { DOE_PDF_PARSER_ID } from "../parsers/doe/constants";
 
 type AdminId = Types.ObjectId | string;
 
@@ -69,7 +70,7 @@ export async function createDoeRawFromUpload(params: {
     sourceType: "official_local",
     sourceName: "DOE",
     sourceUrl,
-    parserId: "doe_pdf_v1",
+    parserId: DOE_PDF_PARSER_ID,
     rawText: textResult.text,
     scrapedAt: new Date(),
     parserVersion: "v1",
@@ -140,7 +141,7 @@ export async function createDoeRawFromLink(params: {
     sourceType: "official_local",
     sourceName: "DOE",
     sourceUrl: finalPdfUrl,
-    parserId: "doe_pdf_v1",
+    parserId: DOE_PDF_PARSER_ID,
     rawText: text,
     scrapedAt: new Date(),
     parserVersion: "v1",
@@ -245,6 +246,7 @@ export async function commitDoePreview(params: {
     } as any);
 
     const fingerprint = buildFingerprint({
+      sourceType: validated.sourceType,
       sourceUrl: validated.sourceUrl,
       sourcePublishedAt: validated.sourcePublishedAt ? validated.sourcePublishedAt.toISOString() : "",
       fuelType: validated.fuelType,
@@ -287,4 +289,3 @@ export async function commitDoePreview(params: {
 
   return { ok: true as const, createdOrUpdated };
 }
-

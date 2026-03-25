@@ -16,7 +16,7 @@ function toLegacyPhShape(p: any) {
   return {
     _id: p._id,
     fuelType: p.fuelType,
-    price: typeof p.finalPrice === "number" ? p.finalPrice : 0,
+    price: typeof p.finalPrice === "number" ? p.finalPrice : null,
     weeklyChange: typeof p.priceChange === "number" ? p.priceChange : 0,
     region: p.region,
     source: p.supportingSources?.[0]?.sourceName ?? "Gasolink",
@@ -181,4 +181,3 @@ export async function getPhSourceDetails(req: Request, res: Response) {
 
   return res.json(ok({ raw: raw ?? null, normalized: normalized ?? null, published: published ?? null }));
 }
-

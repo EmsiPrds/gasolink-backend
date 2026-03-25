@@ -9,6 +9,7 @@ const doeAliasParsers_1 = require("./doe/doeAliasParsers");
 const companyGenericParser_1 = require("./company/companyGenericParser");
 const newsGenericParser_1 = require("./news/newsGenericParser");
 const fbPublicPageParser_1 = require("./fb/fbPublicPageParser");
+const groqParser_1 = require("./ai/groqParser");
 // Register real parsers here as you add source-specific implementations.
 exports.parsers = [
     doeAliasParsers_1.doeNoticesAliasParser,
@@ -19,5 +20,6 @@ exports.parsers = [
     companyGenericParser_1.companyGenericParser,
     newsGenericParser_1.newsGenericParser,
     fbPublicPageParser_1.fbPublicPageParser,
+    groqParser_1.groqParser,
     noopParser_1.noopParser,
 ];

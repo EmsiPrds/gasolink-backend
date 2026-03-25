@@ -8,3 +8,5 @@ exports.phRouter.get("/latest", phControllerV2_1.getPhLatest);
 exports.phRouter.get("/history", phControllerV2_1.getPhHistory);
 exports.phRouter.get("/observed", phControllerV2_1.getPhObserved);
 exports.phRouter.get("/sources/:id", phControllerV2_1.getPhSourceDetails);
+// Accuracy-first pipeline: public user price reporting (Observed)
+exports.phRouter.post("/report", phControllerV2_1.reportPublicPrice);

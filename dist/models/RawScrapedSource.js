@@ -12,6 +12,8 @@ const RawScrapedSourceSchema = new mongoose_1.Schema({
     rawHtml: { type: String },
     rawText: { type: String },
     rawFilePath: { type: String, trim: true },
+    contentHash: { type: String, trim: true, index: true },
+    sourcePublishedAt: { type: Date, index: true },
     scrapedAt: { type: Date, required: true, default: () => new Date(), index: true },
     parserVersion: { type: String, required: true, default: "v1", index: true },
     processingStatus: {

@@ -20,7 +20,7 @@ export async function getCompanyPrices(req: Request, res: Response) {
       _id: p._id,
       companyName: p.companyName ?? "Unknown",
       fuelType: p.fuelType,
-      price: typeof p.finalPrice === "number" ? p.finalPrice : 0,
+      price: typeof p.finalPrice === "number" ? p.finalPrice : null,
       region: p.region,
       city: p.city,
       status: p.finalStatus,
@@ -44,4 +44,3 @@ export async function getCompanyPrices(req: Request, res: Response) {
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-

@@ -7,6 +7,21 @@ import type { Region } from "../../models/enums";
 
 const regions: Region[] = ["NCR", "Luzon", "Visayas", "Mindanao"];
 
+function inferCompanyName(sourceName: string, sourceUrl: string): string | undefined {
+  const combined = `${sourceName} ${sourceUrl}`.toLowerCase();
+  const mappings: Array<[string, string]> = [
+    ["petron", "Petron"],
+    ["shell", "Shell"],
+    ["caltex", "Caltex"],
+    ["seaoil", "SeaOil"],
+    ["unioil", "Unioil"],
+    ["phoenix", "Phoenix"],
+    ["cleanfuel", "Cleanfuel"],
+  ];
+
+  return mappings.find(([keyword]) => combined.includes(keyword))?.[1];
+}
+
 function extractOutboundLinks($: cheerio.CheerioAPI): string[] {
   const links = new Set<string>();
   $("a[href]").each((_, el) => {
@@ -41,6 +56,7 @@ export const fbPublicPageParser: SourceParser = {
     const statusLabel = statusLabelForSourceType(sourceType);
     const confidenceScore = confidenceForSourceType(sourceType);
     const scrapedAt = raw.scrapedAt ?? new Date();
+    const companyName = inferCompanyName(raw.sourceName, raw.sourceUrl);
 
     const items: NormalizedCandidate[] = [];
     for (const r of regions) {
@@ -51,6 +67,7 @@ export const fbPublicPageParser: SourceParser = {
           confidenceScore,
           fuelType: d.fuelType,
           region: r,
+          companyName,
           priceChange: d.delta,
           currency: "PHP",
           sourceName: raw.sourceName,
@@ -71,4 +88,3 @@ export const fbPublicPageParser: SourceParser = {
     return { ok: true, items };
   },
 };
-

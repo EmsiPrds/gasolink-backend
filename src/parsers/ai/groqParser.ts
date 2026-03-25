@@ -30,24 +30,26 @@ export const groqParser: SourceParser = {
     const confidenceScore = confidenceForSourceType(sourceType) * aiResult.confidence;
     const scrapedAt = raw.scrapedAt ?? new Date();
 
-    const items: NormalizedCandidate[] = aiResult.items.map((item) => ({
-      sourceType,
-      statusLabel,
-      confidenceScore,
-      fuelType: item.fuelType as FuelType,
-      region: (item.region as Region) || "NCR", // default to NCR if not found
-      city: item.city,
-      pricePerLiter: item.pricePerLiter,
-      priceChange: item.priceChange,
-      currency: "PHP",
-      sourceName: raw.sourceName,
-      sourceUrl: raw.sourceUrl,
-      scrapedAt,
-      effectiveAt: item.effectiveAt ? new Date(item.effectiveAt) : undefined,
-      sourcePublishedAt: item.effectiveAt ? new Date(item.effectiveAt) : undefined,
-      companyName: item.companyName,
-      productName: item.productName,
-    }));
+    const items: NormalizedCandidate[] = aiResult.items
+      .filter((item) => item.region && item.effectiveAt)
+      .map((item) => ({
+        sourceType,
+        statusLabel,
+        confidenceScore,
+        fuelType: item.fuelType as FuelType,
+        region: item.region as Region,
+        city: item.city,
+        pricePerLiter: item.pricePerLiter,
+        priceChange: item.priceChange,
+        currency: "PHP",
+        sourceName: raw.sourceName,
+        sourceUrl: raw.sourceUrl,
+        scrapedAt,
+        effectiveAt: item.effectiveAt ? new Date(item.effectiveAt) : undefined,
+        sourcePublishedAt: item.effectiveAt ? new Date(item.effectiveAt) : undefined,
+        companyName: item.companyName,
+        productName: item.productName,
+      }));
 
     return { ok: true, items };
   },

@@ -38,6 +38,22 @@ const cheerio = __importStar(require("cheerio"));
 const confidence_1 = require("../../normalization/confidence");
 const deltaExtract_1 = require("../shared/deltaExtract");
 const regions = ["NCR", "Luzon", "Visayas", "Mindanao"];
+function inferCompanyName(sourceName, sourceUrl) {
+    const combined = `${sourceName} ${sourceUrl}`.toLowerCase();
+    const mappings = [
+        ["petron", "Petron"],
+        ["shell", "Shell"],
+        ["caltex", "Caltex"],
+        ["seaoil", "SeaOil"],
+        ["unioil", "Unioil"],
+        ["phoenix", "Phoenix"],
+        ["cleanfuel", "Cleanfuel"],
+        ["jetti", "Jetti"],
+        ["ptt", "PTT"],
+        ["total", "TotalEnergies"],
+    ];
+    return mappings.find(([keyword]) => combined.includes(keyword))?.[1];
+}
 exports.companyGenericParser = {
     id: "company_generic_v1",
     canHandle: (raw) => raw.parserId === "company_generic_v1",
@@ -47,13 +63,14 @@ exports.companyGenericParser = {
         const combined = html ? cheerio.load(html).text() : text;
         const deltas = (0, deltaExtract_1.extractFuelDeltas)(combined);
         const effectiveAt = (0, deltaExtract_1.extractEffectivity)(combined);
-        // Fail closed: if we can't extract a delta, we don't publish.
-        if (deltas.length === 0)
+        // Fail closed: require both a delta and effectivity so old advisories do not get resurfaced.
+        if (deltas.length === 0 || !effectiveAt)
             return { ok: true, items: [] };
         const sourceType = raw.sourceType;
         const statusLabel = (0, confidence_1.statusLabelForSourceType)(sourceType);
         const confidenceScore = (0, confidence_1.confidenceForSourceType)(sourceType);
         const scrapedAt = raw.scrapedAt ?? new Date();
+        const companyName = inferCompanyName(raw.sourceName, raw.sourceUrl);
         const items = [];
         for (const r of regions) {
             for (const d of deltas) {
@@ -63,13 +80,14 @@ exports.companyGenericParser = {
                     confidenceScore,
                     fuelType: d.fuelType,
                     region: r,
+                    companyName,
                     priceChange: d.delta,
                     currency: "PHP",
                     sourceName: raw.sourceName,
                     sourceUrl: raw.sourceUrl,
                     scrapedAt,
-                    effectiveAt: effectiveAt ?? undefined,
-                    sourcePublishedAt: effectiveAt ?? undefined,
+                    effectiveAt,
+                    sourcePublishedAt: effectiveAt,
                 });
             }
         }

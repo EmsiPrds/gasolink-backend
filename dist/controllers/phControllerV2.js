@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPhLatest = getPhLatest;
 exports.getPhHistory = getPhHistory;
 exports.getPhObserved = getPhObserved;
+exports.reportPublicPrice = reportPublicPrice;
 exports.getPhSourceDetails = getPhSourceDetails;
 const apiResponse_1 = require("../utils/apiResponse");
 const FinalPublishedFuelPrice_1 = require("../models/FinalPublishedFuelPrice");
@@ -13,11 +14,14 @@ const enums_1 = require("../models/enums");
 const period_1 = require("../utils/period");
 const phValidators_1 = require("../validators/phValidators");
 const zod_1 = require("zod");
+const fingerprint_1 = require("../normalization/fingerprint");
+const httpStatus_1 = require("../utils/httpStatus");
+const apiResponse_2 = require("../utils/apiResponse");
 function toLegacyPhShape(p) {
     return {
         _id: p._id,
         fuelType: p.fuelType,
-        price: typeof p.finalPrice === "number" ? p.finalPrice : 0,
+        price: typeof p.finalPrice === "number" ? p.finalPrice : null,
         weeklyChange: typeof p.priceChange === "number" ? p.priceChange : 0,
         region: p.region,
         source: p.supportingSources?.[0]?.sourceName ?? "Gasolink",
@@ -98,6 +102,58 @@ async function getPhObserved(req, res) {
     return res.json((0, apiResponse_1.ok)({ items }));
 }
 const SourceDetailsParamSchema = zod_1.z.object({ id: zod_1.z.string().min(1) });
+const PublicReportSchema = zod_1.z.object({
+    fuelType: zod_1.z.enum(enums_1.FuelTypeValues),
+    pricePerLiter: zod_1.z.number().positive(),
+    region: zod_1.z.string().min(1),
+    city: zod_1.z.string().min(1),
+    stationName: zod_1.z.string().min(1),
+    address: zod_1.z.string().optional(),
+});
+async function reportPublicPrice(req, res) {
+    try {
+        const validated = PublicReportSchema.parse(req.body);
+        const now = new Date();
+        const fingerprint = (0, fingerprint_1.buildFingerprint)({
+            sourceType: "observed_station",
+            sourceUrl: "public_report", // identifier for crowdsourced entries
+            fuelType: validated.fuelType,
+            region: validated.region,
+            city: validated.city.toLowerCase(),
+            stationName: validated.stationName.toLowerCase(),
+            pricePerLiter: validated.pricePerLiter,
+            scrapedAt: now.toISOString().split("T")[0], // one per day per unique combination
+        });
+        const record = await NormalizedFuelRecord_1.NormalizedFuelRecord.findOneAndUpdate({ fingerprint }, {
+            $setOnInsert: {
+                sourceType: "observed_station",
+                statusLabel: "Observed",
+                confidenceScore: 0.5, // Base confidence for anonymous public reports
+                fuelType: validated.fuelType,
+                region: validated.region,
+                city: validated.city,
+                stationName: validated.stationName,
+                pricePerLiter: validated.pricePerLiter,
+                currency: "PHP",
+                sourceName: `User Report: ${validated.stationName}`,
+                sourceUrl: "public_report",
+                scrapedAt: now,
+                fingerprint,
+            },
+        }, { upsert: true, new: true });
+        return res.status(httpStatus_1.httpStatus.created).json((0, apiResponse_1.ok)({ record }));
+    }
+    catch (err) {
+        if (err instanceof zod_1.z.ZodError) {
+            return res.status(httpStatus_1.httpStatus.badRequest).json((0, apiResponse_2.fail)({
+                code: "VALIDATION_ERROR",
+                message: "Invalid report data",
+                details: err.flatten(),
+            }));
+        }
+        throw err;
+    }
+}
 async function getPhSourceDetails(req, res) {
     const { id } = SourceDetailsParamSchema.parse(req.params);
     // Try to interpret :id as a RawScrapedSource id first, then Normalized, then Published.

@@ -4,9 +4,7 @@ import type { NormalizedFuelRecordDoc } from "../models/NormalizedFuelRecord";
 import { UpdateLog } from "../models/UpdateLog";
 import { buildFingerprint } from "../normalization/fingerprint";
 import { isStale } from "../normalization/staleness";
-import { refinePriceWithAi } from "../services/aiService";
-import { GlobalPrice } from "../models/GlobalPrice";
-import { FuelTypeValues, RegionValues } from "../models/enums";
+import { inferDoeDocumentDateFromUrl } from "../parsers/doe/dateInference";
 
 function sourcePriority(sourceType: NormalizedFuelRecordDoc["sourceType"]): number {
   switch (sourceType) {
@@ -27,6 +25,23 @@ function sourcePriority(sourceType: NormalizedFuelRecordDoc["sourceType"]): numb
   }
 }
 
+function displayTypeForSourceType(sourceType: NormalizedFuelRecordDoc["sourceType"]): "ph_final" | "ph_company" | null {
+  switch (sourceType) {
+    case "official_local":
+      return "ph_final";
+    case "company_advisory":
+      return "ph_company";
+    case "observed_station":
+    case "estimate":
+    case "global_api":
+      return null;
+    default: {
+      const _exhaustive: never = sourceType;
+      return _exhaustive;
+    }
+  }
+}
+
 function buildPublishKey(doc: Pick<NormalizedFuelRecordDoc, "fuelType" | "region" | "city" | "companyName"> & { displayType: string }) {
   return buildFingerprint({
     displayType: doc.displayType,
@@ -37,18 +52,86 @@ function buildPublishKey(doc: Pick<NormalizedFuelRecordDoc, "fuelType" | "region
   });
 }
 
+function extractHost(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+function isDirectCompanySource(item: Pick<NormalizedFuelRecordDoc, "sourceName" | "sourceUrl">): boolean {
+  const host = extractHost(item.sourceUrl);
+  const combined = `${item.sourceName} ${host}`;
+  const companyKeywords = ["petron", "shell", "caltex", "seaoil", "unioil", "phoenix", "cleanfuel", "jetti", "ptt"];
+  const newsHosts = ["gmanetwork.com", "abs-cbn.com", "philstar.com", "inquirer.net", "mb.com.ph", "rappler.com"];
+
+  if (newsHosts.some((candidate) => host.includes(candidate))) return false;
+  if (host.includes("facebook.com")) return companyKeywords.some((keyword) => combined.includes(keyword));
+
+  return companyKeywords.some((keyword) => combined.includes(keyword));
+}
+
+function hasCorroborationForPublish(winner: NormalizedFuelRecordDoc, items: NormalizedFuelRecordDoc[]): boolean {
+  if (winner.sourceType === "official_local") return true;
+  if (winner.sourceType !== "company_advisory") return false;
+  if (!winner.effectiveAt && !winner.sourcePublishedAt) return false;
+
+  const uniqueHosts = new Set(items.map((item) => extractHost(item.sourceUrl)));
+  return items.some((item) => isDirectCompanySource(item)) || uniqueHosts.size >= 2;
+}
+
+function canonicalDocumentDate(
+  doc: Pick<NormalizedFuelRecordDoc, "effectiveAt" | "sourcePublishedAt" | "sourceUrl" | "scrapedAt" | "updatedAt">,
+): Date {
+  return doc.effectiveAt ?? inferDoeDocumentDateFromUrl(doc.sourceUrl) ?? doc.sourcePublishedAt ?? doc.scrapedAt ?? doc.updatedAt;
+}
+
+function candidateFreshness(
+  doc: Pick<NormalizedFuelRecordDoc, "effectiveAt" | "sourcePublishedAt" | "sourceUrl" | "scrapedAt" | "updatedAt">,
+): number {
+  return new Date(canonicalDocumentDate(doc)).getTime();
+}
+
 export async function reconcileFuelRecords(params?: { sinceMinutes?: number }) {
   const now = new Date();
   const sinceMinutes = params?.sinceMinutes ?? 180;
   const from = new Date(now.getTime() - sinceMinutes * 60_000);
+  const recentCutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   const candidates = await NormalizedFuelRecord.find({ 
     updatedAt: { $gte: from },
     $or: [
-        { effectiveAt: { $gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) } },
-        { sourcePublishedAt: { $gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) } },
+        { effectiveAt: { $gte: recentCutoff } },
+        { sourcePublishedAt: { $gte: recentCutoff } },
     ]
   }).sort({ confidenceScore: -1 }).lean();
+
+  const fuelTypes = Array.from(new Set(candidates.map((candidate) => candidate.fuelType)));
+  const regions = Array.from(new Set(candidates.map((candidate) => candidate.region)));
+  const latestPriceDocs =
+    fuelTypes.length > 0 && regions.length > 0
+      ? await FinalPublishedFuelPrice.find(
+          {
+            fuelType: { $in: fuelTypes },
+            region: { $in: regions },
+            displayType: "ph_final",
+            companyName: { $in: [null, ""] },
+            city: { $in: [null, ""] },
+            finalPrice: { $ne: null },
+          },
+          { fuelType: 1, region: 1, finalPrice: 1, lastVerifiedAt: 1 },
+        )
+          .sort({ lastVerifiedAt: -1 })
+          .lean()
+      : [];
+  const latestPriceByFuelRegion = new Map<string, number>();
+  for (const doc of latestPriceDocs) {
+    const key = `${doc.fuelType}::${doc.region}`;
+    if (!latestPriceByFuelRegion.has(key) && typeof doc.finalPrice === "number") {
+      latestPriceByFuelRegion.set(key, doc.finalPrice);
+    }
+  }
 
   // Group by fuelType+region+city+companyName.
   // This avoids mixing "official regional" with "company advisory" with "observed station" into a single competition.
@@ -60,7 +143,7 @@ export async function reconcileFuelRecords(params?: { sinceMinutes?: number }) {
     groups.set(key, arr);
   }
 
-  let upserted = 0;
+  const operations: Parameters<typeof FinalPublishedFuelPrice.bulkWrite>[0] = [];
   for (const [, items] of groups) {
     const sorted = items
       .slice()
@@ -69,6 +152,9 @@ export async function reconcileFuelRecords(params?: { sinceMinutes?: number }) {
         const bp = sourcePriority(b.sourceType);
         if (ap !== bp) return bp - ap;
         if (a.confidenceScore !== b.confidenceScore) return b.confidenceScore - a.confidenceScore;
+        const at = candidateFreshness(a);
+        const bt = candidateFreshness(b);
+        if (at !== bt) return bt - at;
         return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
       });
 
@@ -79,15 +165,13 @@ export async function reconcileFuelRecords(params?: { sinceMinutes?: number }) {
     const itemsWithPrice = items.filter((item) => typeof item.pricePerLiter === "number");
     const averagePrice =
       itemsWithPrice.length > 0
-        ? itemsWithPrice.reduce((sum, item) => sum + (item.pricePerLiter ?? 0), 0) / itemsWithPrice.length
+      ? itemsWithPrice.reduce((sum, item) => sum + (item.pricePerLiter ?? 0), 0) / itemsWithPrice.length
         : null;
 
-    const displayType =
-      winner.sourceType === "company_advisory"
-        ? "ph_company"
-        : winner.sourceType === "observed_station"
-          ? "ph_observed"
-          : "ph_final";
+    const displayType = displayTypeForSourceType(winner.sourceType);
+    if (!displayType) continue;
+    if (!hasCorroborationForPublish(winner, items as NormalizedFuelRecordDoc[])) continue;
+
     const publishKey = buildPublishKey({
       displayType,
       fuelType: winner.fuelType,
@@ -108,32 +192,16 @@ export async function reconcileFuelRecords(params?: { sinceMinutes?: number }) {
       statusLabel: s.statusLabel,
     }));
 
-    const lastVerifiedAt = winner.sourcePublishedAt ?? winner.scrapedAt ?? winner.updatedAt ?? now;
+    const lastVerifiedAt = canonicalDocumentDate(winner);
 
     let finalPrice = typeof winner.pricePerLiter === "number" ? winner.pricePerLiter : null;
 
     // If we have a priceChange but not a final price, estimate it from the last known price
     if (finalPrice === null && typeof winner.priceChange === "number") {
-      const lastPriceDoc = await FinalPublishedFuelPrice.findOne(
-        {
-          fuelType: winner.fuelType,
-          region: winner.region,
-          finalPrice: { $ne: null },
-        },
-        { finalPrice: 1 },
-      ).sort({ lastVerifiedAt: -1 });
+      const lastPrice = latestPriceByFuelRegion.get(`${winner.fuelType}::${winner.region}`);
 
-      if (lastPriceDoc && typeof lastPriceDoc.finalPrice === "number") {
-        finalPrice = lastPriceDoc.finalPrice + winner.priceChange;
-      } else {
-        // Fallback to baseline prices if no history exists (approximate PH prices as of March 2026)
-        const baseline: Record<string, number> = {
-          Gasoline: 65.5,
-          Diesel: 58.2,
-          Kerosene: 72.4,
-        };
-        const base = baseline[winner.fuelType] ?? 60;
-        finalPrice = base + winner.priceChange;
+      if (typeof lastPrice === "number") {
+        finalPrice = lastPrice + winner.priceChange;
       }
     }
 
@@ -142,29 +210,38 @@ export async function reconcileFuelRecords(params?: { sinceMinutes?: number }) {
       continue;
     }
 
-    await FinalPublishedFuelPrice.findOneAndUpdate(
-      { publishKey },
-      {
-        displayType,
-        companyName: winner.companyName,
-        fuelType: winner.fuelType,
-        region: winner.region,
-        city: winner.city,
-        finalPrice: finalPrice,
-        averagePrice: averagePrice ?? null,
-        priceChange: winner.priceChange,
-        currency: winner.currency ?? "PHP",
-        supportingSources,
-        finalStatus: winner.statusLabel,
-        confidenceScore: winner.confidenceScore,
-        lastVerifiedAt,
-        updatedAt: now,
-        publishKey,
+    operations.push({
+      updateOne: {
+        filter: { publishKey },
+        update: {
+          $set: {
+            displayType,
+            companyName: winner.companyName,
+            fuelType: winner.fuelType,
+            region: winner.region,
+            city: winner.city,
+            finalPrice: finalPrice,
+            averagePrice: averagePrice ?? null,
+            priceChange: winner.priceChange,
+            currency: winner.currency ?? "PHP",
+            supportingSources,
+            finalStatus: winner.statusLabel,
+            confidenceScore: winner.confidenceScore,
+            lastVerifiedAt,
+            updatedAt: now,
+            publishKey,
+          },
+        },
+        upsert: true,
       },
-      { upsert: true, new: true },
-    );
-    upserted += 1;
+    });
   }
+
+  if (operations.length > 0) {
+    await FinalPublishedFuelPrice.bulkWrite(operations, { ordered: false });
+  }
+
+  const upserted = operations.length;
 
   await UpdateLog.create({
     module: "reconciliation",
@@ -175,4 +252,3 @@ export async function reconcileFuelRecords(params?: { sinceMinutes?: number }) {
 
   return { ok: true as const, groups: groups.size, upserted };
 }
-

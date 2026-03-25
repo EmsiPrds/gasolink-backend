@@ -31,7 +31,6 @@ const NormalizedFuelRecordSchema = new mongoose_1.Schema({
     sourcePublishedAt: { type: Date },
     scrapedAt: { type: Date, required: true, default: () => new Date(), index: true },
     effectiveAt: { type: Date, index: true },
-    updatedAt: { type: Date, required: true, default: () => new Date(), index: true },
     // Dedupe: hash/fingerprint of normalized content + source identity.
     fingerprint: { type: String, required: true, index: true, unique: true },
     // Optional: reference to raw snapshot used (not enforced as ObjectId to keep ingestion flexible)

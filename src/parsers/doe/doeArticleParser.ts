@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import type { SourceParser } from "../parserTypes";
 import { RawScrapedSource } from "../../models/RawScrapedSource";
+import { DOE_PDF_PARSER_ID } from "./constants";
 
 function absolutize(baseUrl: string, href: string): string {
   try {
@@ -37,7 +38,7 @@ export const doeArticleParser: SourceParser = {
         sourceType: raw.sourceType,
         sourceName: raw.sourceName,
         sourceUrl: url,
-        parserId: "doe_pdf_v1",
+        parserId: DOE_PDF_PARSER_ID,
         scrapedAt: now,
         parserVersion: raw.parserVersion,
         processingStatus: "raw",
@@ -47,4 +48,3 @@ export const doeArticleParser: SourceParser = {
     return { ok: true, items: [] };
   },
 };
-

@@ -38,6 +38,19 @@ const cheerio = __importStar(require("cheerio"));
 const confidence_1 = require("../../normalization/confidence");
 const deltaExtract_1 = require("../shared/deltaExtract");
 const regions = ["NCR", "Luzon", "Visayas", "Mindanao"];
+function inferCompanyName(sourceName, sourceUrl) {
+    const combined = `${sourceName} ${sourceUrl}`.toLowerCase();
+    const mappings = [
+        ["petron", "Petron"],
+        ["shell", "Shell"],
+        ["caltex", "Caltex"],
+        ["seaoil", "SeaOil"],
+        ["unioil", "Unioil"],
+        ["phoenix", "Phoenix"],
+        ["cleanfuel", "Cleanfuel"],
+    ];
+    return mappings.find(([keyword]) => combined.includes(keyword))?.[1];
+}
 function extractOutboundLinks($) {
     const links = new Set();
     $("a[href]").each((_, el) => {
@@ -72,6 +85,7 @@ exports.fbPublicPageParser = {
         const statusLabel = (0, confidence_1.statusLabelForSourceType)(sourceType);
         const confidenceScore = (0, confidence_1.confidenceForSourceType)(sourceType);
         const scrapedAt = raw.scrapedAt ?? new Date();
+        const companyName = inferCompanyName(raw.sourceName, raw.sourceUrl);
         const items = [];
         for (const r of regions) {
             for (const d of deltas) {
@@ -81,6 +95,7 @@ exports.fbPublicPageParser = {
                     confidenceScore,
                     fuelType: d.fuelType,
                     region: r,
+                    companyName,
                     priceChange: d.delta,
                     currency: "PHP",
                     sourceName: raw.sourceName,

@@ -5,14 +5,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.extractPdfText = extractPdfText;
 const promises_1 = __importDefault(require("fs/promises"));
-const httpFetch_1 = require("../scrapers/httpFetch");
+const http_1 = require("../utils/http");
 const UpdateLog_1 = require("../models/UpdateLog");
 const pdf_parse_1 = require("pdf-parse");
 async function loadPdfBytes(source) {
     if ("localPath" in source) {
         return promises_1.default.readFile(source.localPath);
     }
-    const fetched = await (0, httpFetch_1.fetchBinary)(source.url);
+    const fetched = await (0, http_1.fetchBinary)(source.url);
     if (fetched.status < 200 || fetched.status >= 300) {
         throw new Error(`HTTP ${fetched.status} for ${source.url}`);
     }
