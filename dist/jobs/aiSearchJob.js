@@ -6,7 +6,7 @@ const NormalizedFuelRecord_1 = require("../models/NormalizedFuelRecord");
 const UpdateLog_1 = require("../models/UpdateLog");
 const fingerprint_1 = require("../normalization/fingerprint");
 const validators_1 = require("../normalization/validators");
-const reconcileFuelRecords_1 = require("../reconciliation/reconcileFuelRecords");
+const aiPriceEstimation_1 = require("../reconciliation/aiPriceEstimation");
 function isKnownCompanySource(sourceName, sourceUrl) {
     const combined = `${sourceName} ${sourceUrl}`.toLowerCase();
     return [
@@ -25,6 +25,11 @@ function isKnownCompanySource(sourceName, sourceUrl) {
 async function runAiSearchDataGathering(options) {
     console.log("==> Starting AI-driven supporting search data gathering...");
     try {
+        // Cleanup: remove previously ingested non-market noise records so they don't bias estimates.
+        await NormalizedFuelRecord_1.NormalizedFuelRecord.deleteMany({
+            sourceType: "estimate",
+            sourceUrl: { $regex: /(typhoon|price-freeze|price%20freeze|bayanihan)/i },
+        });
         const aiResult = await (0, aiService_1.searchAndExtractFuelPricesWithAi)();
         if (!aiResult || aiResult.items.length === 0) {
             await UpdateLog_1.UpdateLog.create({
@@ -38,6 +43,10 @@ async function runAiSearchDataGathering(options) {
         const scrapedAt = new Date();
         const seenFingerprints = new Set();
         const operations = [];
+        const minReliabilityScore = options?.minReliabilityScore ?? 0.3;
+        let filteredUnreliable = 0;
+        let filteredDuplicates = 0;
+        const seenLogicalKeys = new Set();
         for (const item of aiResult.items) {
             // Basic validation: ensure we have at least a price or a change
             if (item.pricePerLiter == null && item.priceChange == null) {
@@ -49,13 +58,23 @@ async function runAiSearchDataGathering(options) {
             if ((options?.requireRegion ?? true) && !item.region) {
                 continue;
             }
+            if ((item.reliabilityScore ?? 0) < minReliabilityScore) {
+                filteredUnreliable += 1;
+                continue;
+            }
+            const logicalKey = `${item.sourceUrl}::${item.fuelType}::${item.region ?? ""}::${item.effectiveAt ?? ""}`;
+            if (seenLogicalKeys.has(logicalKey)) {
+                filteredDuplicates += 1;
+                continue;
+            }
+            seenLogicalKeys.add(logicalKey);
             let sourceType = "estimate";
             let statusLabel = "Estimate";
             if (!options?.degradeToEstimate && isKnownCompanySource(item.sourceName, item.sourceUrl)) {
                 sourceType = "company_advisory";
                 statusLabel = "Advisory";
             }
-            const region = item.region;
+            const region = item.region ?? ((options?.requireRegion ?? true) ? undefined : "NCR");
             if (!region)
                 continue;
             const confidenceScore = sourceType === "company_advisory"
@@ -63,6 +82,7 @@ async function runAiSearchDataGathering(options) {
                 : Math.min(0.45, Math.max(0.1, aiResult.confidence * 0.45));
             const candidate = {
                 sourceType,
+                sourceCategory: "web_scrape",
                 statusLabel,
                 confidenceScore,
                 fuelType: item.fuelType,
@@ -114,12 +134,12 @@ async function runAiSearchDataGathering(options) {
         await UpdateLog_1.UpdateLog.create({
             module: "ai_search_job",
             status: "success",
-            message: `AI fallback search finished. created ${savedCount} new estimate/supporting records.`,
+            message: `AI data gathering finished. scanned=${aiResult.items.length} created=${savedCount} unreliableFiltered=${filteredUnreliable} duplicateFiltered=${filteredDuplicates}`,
             timestamp: new Date(),
         });
         if (!options?.skipReconcile) {
-            console.log("==> Triggering automatic reconciliation after AI fallback search...");
-            await (0, reconcileFuelRecords_1.reconcileFuelRecords)();
+            console.log("==> Triggering AI-native publish update after AI ingestion...");
+            await (0, aiPriceEstimation_1.runAiPriceEstimation)();
         }
         return { savedCount, scannedCount: aiResult.items.length };
     }

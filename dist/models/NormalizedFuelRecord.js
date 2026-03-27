@@ -11,8 +11,10 @@ const SupportingSourceSchema = new mongoose_1.Schema({
     scrapedAt: { type: Date, required: true },
     parserVersion: { type: String, required: true },
 }, { _id: false });
+const SourceCategoryValues = ["global_api", "doe_official", "web_scrape", "user_report"];
 const NormalizedFuelRecordSchema = new mongoose_1.Schema({
     sourceType: { type: String, enum: enums_1.SourceTypeValues, required: true, index: true },
+    sourceCategory: { type: String, enum: SourceCategoryValues, required: true, index: true, default: "web_scrape" },
     statusLabel: { type: String, enum: enums_1.StatusLabelValues, required: true, index: true },
     confidenceScore: { type: Number, required: true, min: 0, max: 1, index: true },
     companyName: { type: String, trim: true, index: true },

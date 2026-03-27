@@ -13,9 +13,12 @@ const SupportingSourceSchema = new Schema(
   { _id: false },
 );
 
+const SourceCategoryValues = ["global_api", "doe_official", "web_scrape", "user_report"] as const;
+
 const NormalizedFuelRecordSchema = new Schema(
   {
     sourceType: { type: String, enum: SourceTypeValues, required: true, index: true },
+    sourceCategory: { type: String, enum: SourceCategoryValues, required: true, index: true, default: "web_scrape" },
     statusLabel: { type: String, enum: StatusLabelValues, required: true, index: true },
     confidenceScore: { type: Number, required: true, min: 0, max: 1, index: true },
 

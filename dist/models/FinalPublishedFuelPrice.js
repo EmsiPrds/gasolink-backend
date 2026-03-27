@@ -14,6 +14,13 @@ const PublishedSupportingSourceSchema = new mongoose_1.Schema({
     confidenceScore: { type: Number, required: true, min: 0, max: 1 },
     statusLabel: { type: String, enum: enums_1.StatusLabelValues, required: true },
 }, { _id: false });
+const SourceBreakdownSchema = new mongoose_1.Schema({
+    sourceCategory: { type: String, required: true, trim: true },
+    sampleSize: { type: Number, required: true, min: 0 },
+    avgConfidence: { type: Number, required: true, min: 0, max: 1 },
+    avgPrice: { type: Number, min: 0 },
+    freshnessHours: { type: Number, min: 0 },
+}, { _id: false });
 const FinalPublishedFuelPriceSchema = new mongoose_1.Schema({
     // displayType can be used to separate "official_latest" vs "observed" vs "advisory_delta"
     displayType: { type: String, required: true, default: "ph_final", index: true },
@@ -30,6 +37,9 @@ const FinalPublishedFuelPriceSchema = new mongoose_1.Schema({
     supportingSources: { type: [PublishedSupportingSourceSchema], required: true, default: [] },
     finalStatus: { type: String, enum: enums_1.StatusLabelValues, required: true, index: true },
     confidenceScore: { type: Number, required: true, min: 0, max: 1, index: true },
+    confidenceLabel: { type: String, required: true, default: "Low", index: true },
+    estimateExplanation: { type: String, required: true, default: "" },
+    sourceBreakdown: { type: [SourceBreakdownSchema], required: true, default: [] },
     lastVerifiedAt: { type: Date, required: true, index: true },
     updatedAt: { type: Date, required: true, default: () => new Date(), index: true },
     // For dedupe / upsert

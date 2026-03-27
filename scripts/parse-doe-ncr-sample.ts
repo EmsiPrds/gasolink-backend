@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { extractPdfText } from "../src/services/pdfTextService";
 
 async function main() {

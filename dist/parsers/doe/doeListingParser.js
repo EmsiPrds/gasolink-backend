@@ -39,6 +39,8 @@ const RawScrapedSource_1 = require("../../models/RawScrapedSource");
 const aiService_1 = require("../../services/aiService");
 const dateInference_1 = require("./dateInference");
 const constants_1 = require("./constants");
+const doeFreshnessAiService_1 = require("../../services/doeFreshnessAiService");
+const MAX_DOE_DOC_AGE_DAYS = 14;
 function absolutize(baseUrl, href) {
     try {
         return new URL(href, baseUrl).toString();
@@ -141,22 +143,50 @@ exports.doeListingParser = {
             return bt - at;
         })
             .slice(0, 16);
-        for (const doc of recentDocs) {
-            await RawScrapedSource_1.RawScrapedSource.updateOne({ sourceUrl: doc.url, parserId: constants_1.DOE_PDF_PARSER_ID }, {
+        // OpenAI freshness guard: choose SINGLE newest document and verify it's within the allowed weekly window.
+        const ai = await (0, doeFreshnessAiService_1.validateLatestDoeDocWithAi)({
+            now,
+            listingUrl: raw.sourceUrl,
+            listingHtmlSnippet: html.slice(0, 12000),
+            candidates: recentDocs.map((d) => ({
+                url: d.url,
+                label: d.url,
+                publishedAtHint: d.publishedAt ? d.publishedAt.toISOString() : null,
+            })),
+        });
+        const aiDocDate = new Date(ai.documentDate);
+        const cutoff = new Date(now.getTime() - MAX_DOE_DOC_AGE_DAYS * 24 * 60 * 60 * 1000);
+        const docWithinAllowedWindow = Number.isFinite(aiDocDate.getTime()) && aiConfidencePass(ai.confidence) && aiDocDate >= cutoff && aiDocDate <= now;
+        if (!docWithinAllowedWindow) {
+            // Fail-closed: do not upsert any DOE PDF raws if freshness cannot be verified.
+            await RawScrapedSource_1.RawScrapedSource.updateOne({ sourceUrl: raw.sourceUrl, parserId: raw.parserId }, {
                 $set: {
-                    sourcePublishedAt: doc.publishedAt ?? undefined,
+                    errorMessage: `DOE freshness guard blocked: ${ai.reason}`,
                 },
-                $setOnInsert: {
-                    sourceType: raw.sourceType,
-                    sourceName: raw.sourceName,
-                    sourceUrl: doc.url,
-                    parserId: constants_1.DOE_PDF_PARSER_ID,
-                    scrapedAt: now,
-                    parserVersion: raw.parserVersion,
-                    processingStatus: "raw",
-                },
-            }, { upsert: true });
+            }).catch(() => { });
+            return { ok: true, items: [] };
         }
+        await RawScrapedSource_1.RawScrapedSource.updateOne({ sourceUrl: ai.latestDocUrl, parserId: constants_1.DOE_PDF_PARSER_ID }, {
+            $set: {
+                sourcePublishedAt: aiDocDate,
+                aiSelectedLatest: true,
+                aiDocumentDate: aiDocDate,
+                aiConfidence: ai.confidence,
+                aiReason: ai.reason,
+            },
+            $setOnInsert: {
+                sourceType: raw.sourceType,
+                sourceName: raw.sourceName,
+                sourceUrl: ai.latestDocUrl,
+                parserId: constants_1.DOE_PDF_PARSER_ID,
+                scrapedAt: now,
+                parserVersion: raw.parserVersion,
+                processingStatus: "raw",
+            },
+        }, { upsert: true });
         return { ok: true, items: [] };
     },
 };
+function aiConfidencePass(confidence) {
+    return typeof confidence === "number" && confidence >= 0.65;
+}

@@ -4,6 +4,8 @@ import { RawScrapedSource } from "../../models/RawScrapedSource";
 import { discoverLatestLinksWithAi } from "../../services/aiService";
 import { inferDoeDocumentDateFromLabel, inferDoeDocumentDateFromUrl } from "./dateInference";
 import { DOE_PDF_PARSER_ID } from "./constants";
+import { validateLatestDoeDocWithAi } from "../../services/doeFreshnessAiService";
+const MAX_DOE_DOC_AGE_DAYS = 14;
 
 function absolutize(baseUrl: string, href: string): string {
   try {
@@ -124,27 +126,63 @@ export const doeListingParser: SourceParser = {
       })
       .slice(0, 16);
 
-    for (const doc of recentDocs) {
+    // OpenAI freshness guard: choose SINGLE newest document and verify it's within the allowed weekly window.
+    const ai = await validateLatestDoeDocWithAi({
+      now,
+      listingUrl: raw.sourceUrl,
+      listingHtmlSnippet: html.slice(0, 12000),
+      candidates: recentDocs.map((d) => ({
+        url: d.url,
+        label: d.url,
+        publishedAtHint: d.publishedAt ? d.publishedAt.toISOString() : null,
+      })),
+    });
+
+    const aiDocDate = new Date(ai.documentDate);
+    const cutoff = new Date(now.getTime() - MAX_DOE_DOC_AGE_DAYS * 24 * 60 * 60 * 1000);
+    const docWithinAllowedWindow =
+      Number.isFinite(aiDocDate.getTime()) && aiConfidencePass(ai.confidence) && aiDocDate >= cutoff && aiDocDate <= now;
+
+    if (!docWithinAllowedWindow) {
+      // Fail-closed: do not upsert any DOE PDF raws if freshness cannot be verified.
       await RawScrapedSource.updateOne(
-        { sourceUrl: doc.url, parserId: DOE_PDF_PARSER_ID },
+        { sourceUrl: raw.sourceUrl, parserId: raw.parserId },
         {
           $set: {
-            sourcePublishedAt: doc.publishedAt ?? undefined,
-          },
-          $setOnInsert: {
-            sourceType: raw.sourceType,
-            sourceName: raw.sourceName,
-            sourceUrl: doc.url,
-            parserId: DOE_PDF_PARSER_ID,
-            scrapedAt: now,
-            parserVersion: raw.parserVersion,
-            processingStatus: "raw",
+            errorMessage: `DOE freshness guard blocked: ${ai.reason}`,
           },
         },
-        { upsert: true },
-      );
+      ).catch(() => {});
+      return { ok: true, items: [] };
     }
+
+    await RawScrapedSource.updateOne(
+      { sourceUrl: ai.latestDocUrl, parserId: DOE_PDF_PARSER_ID },
+      {
+        $set: {
+          sourcePublishedAt: aiDocDate,
+          aiSelectedLatest: true,
+          aiDocumentDate: aiDocDate,
+          aiConfidence: ai.confidence,
+          aiReason: ai.reason,
+        },
+        $setOnInsert: {
+          sourceType: raw.sourceType,
+          sourceName: raw.sourceName,
+          sourceUrl: ai.latestDocUrl,
+          parserId: DOE_PDF_PARSER_ID,
+          scrapedAt: now,
+          parserVersion: raw.parserVersion,
+          processingStatus: "raw",
+        },
+      },
+      { upsert: true },
+    );
 
     return { ok: true, items: [] };
   },
 };
+
+function aiConfidencePass(confidence: number): boolean {
+  return typeof confidence === "number" && confidence >= 0.65;
+}

@@ -14,6 +14,11 @@ const RawScrapedSourceSchema = new Schema(
     rawFilePath: { type: String, trim: true },
     contentHash: { type: String, trim: true, index: true },
     sourcePublishedAt: { type: Date, index: true },
+    // AI validation metadata for DOE freshness guard (optional)
+    aiSelectedLatest: { type: Boolean, default: false, index: true },
+    aiDocumentDate: { type: Date, index: true },
+    aiConfidence: { type: Number, min: 0, max: 1 },
+    aiReason: { type: String },
 
     scrapedAt: { type: Date, required: true, default: () => new Date(), index: true },
     parserVersion: { type: String, required: true, default: "v1", index: true },

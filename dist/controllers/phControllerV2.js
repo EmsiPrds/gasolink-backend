@@ -28,6 +28,10 @@ function toLegacyPhShape(p) {
         status: p.finalStatus,
         updatedAt: p.updatedAt,
         confidenceScore: p.confidenceScore,
+        confidenceLabel: p.confidenceLabel,
+        estimatedPrice: typeof p.finalPrice === "number" ? p.finalPrice : null,
+        sourceBreakdown: p.sourceBreakdown ?? [],
+        explanation: p.estimateExplanation ?? "",
         lastVerifiedAt: p.lastVerifiedAt,
         supportingSources: p.supportingSources,
     };
@@ -37,7 +41,15 @@ async function getPhLatest(req, res) {
     const published = await FinalPublishedFuelPrice_1.FinalPublishedFuelPrice.aggregate([
         // "Latest PH prices" on the dashboard is intended to be the regional headline price,
         // not company-specific advisories nor city/station observations.
-        { $match: { region, displayType: "ph_final", companyName: { $in: [null, ""] }, city: { $in: [null, ""] } } },
+        {
+            $match: {
+                region,
+                displayType: "ph_final",
+                companyName: { $in: [null, ""] },
+                city: { $in: [null, ""] },
+                confidenceScore: { $gte: 0.35 },
+            },
+        },
         { $sort: { updatedAt: -1 } },
         { $group: { _id: "$fuelType", doc: { $first: "$$ROOT" } } },
         { $replaceRoot: { newRoot: "$doc" } },
@@ -70,6 +82,7 @@ async function getPhHistory(req, res) {
         displayType: "ph_final",
         companyName: { $in: [null, ""] },
         city: { $in: [null, ""] },
+        confidenceScore: { $gte: 0.35 },
     })
         .sort({ updatedAt: 1 })
         .lean();
@@ -127,6 +140,7 @@ async function reportPublicPrice(req, res) {
         const record = await NormalizedFuelRecord_1.NormalizedFuelRecord.findOneAndUpdate({ fingerprint }, {
             $setOnInsert: {
                 sourceType: "observed_station",
+                sourceCategory: "user_report",
                 statusLabel: "Observed",
                 confidenceScore: 0.5, // Base confidence for anonymous public reports
                 fuelType: validated.fuelType,
@@ -140,7 +154,7 @@ async function reportPublicPrice(req, res) {
                 scrapedAt: now,
                 fingerprint,
             },
-        }, { upsert: true, new: true });
+        }, { upsert: true, returnDocument: "after" });
         return res.status(httpStatus_1.httpStatus.created).json((0, apiResponse_1.ok)({ record }));
     }
     catch (err) {

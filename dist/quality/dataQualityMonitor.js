@@ -15,7 +15,7 @@ async function upsertActiveAlert(params) {
             level: params.level,
             createdAt: params.createdAt,
         },
-    }, { upsert: true, new: true });
+    }, { upsert: true, returnDocument: "after" });
 }
 async function runDataQualityMonitor() {
     const now = new Date();

@@ -11,7 +11,7 @@ async function getPhLatest(req, res) {
     const { region } = phValidators_1.PhLatestQuerySchema.parse(req.query);
     // Prefer accuracy-first published records; fall back to legacy table if none exist.
     const published = await FinalPublishedFuelPrice_1.FinalPublishedFuelPrice.aggregate([
-        { $match: { region, displayType: "ph_final" } },
+        { $match: { region, displayType: "ph_final", confidenceScore: { $gte: 0.35 } } },
         { $sort: { updatedAt: -1 } },
         { $group: { _id: "$fuelType", doc: { $first: "$$ROOT" } } },
         { $replaceRoot: { newRoot: "$doc" } },
@@ -50,6 +50,7 @@ async function getPhHistory(req, res) {
         region,
         updatedAt: { $gte: from },
         displayType: "ph_final",
+        confidenceScore: { $gte: 0.35 },
     })
         .sort({ updatedAt: 1 })
         .lean();

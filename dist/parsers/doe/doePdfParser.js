@@ -6,6 +6,8 @@ const deltaExtract_1 = require("../shared/deltaExtract");
 const pdfTextService_1 = require("../../services/pdfTextService");
 const dateInference_1 = require("./dateInference");
 const constants_1 = require("./constants");
+const doeFreshnessAiService_1 = require("../../services/doeFreshnessAiService");
+const MAX_DOE_DOC_AGE_DAYS = 14;
 function escapeRegex(s) {
     return s.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&");
 }
@@ -174,11 +176,24 @@ exports.doePdfParser = {
         if (!/[0-9]/.test(normalized)) {
             return { ok: false, error: "PDF parsed but content did not match expected fuel patterns" };
         }
-        // Try to infer effectivity from text (e.g. "effective March 19, 2026").
-        const documentDate = (0, deltaExtract_1.extractEffectivity)(normalized) ??
+        const now = raw.scrapedAt ?? new Date();
+        const deterministicDate = (0, deltaExtract_1.extractEffectivity)(normalized) ??
             (0, dateInference_1.inferDoeDocumentDateFromText)(normalized) ??
             (raw.sourcePublishedAt instanceof Date ? raw.sourcePublishedAt : null) ??
             (0, dateInference_1.inferDoeDocumentDateFromUrl)(raw.sourceUrl);
+        // OpenAI freshness guard: verify document date within allowed weekly window (fail-closed).
+        const ai = await (0, doeFreshnessAiService_1.validateLatestDoeDocWithAi)({
+            now,
+            listingUrl: raw.sourceUrl,
+            candidates: [{ url: raw.sourceUrl, label: raw.sourceName, publishedAtHint: deterministicDate ? new Date(deterministicDate).toISOString() : null }],
+            pdfTextSnippet: normalized.slice(0, 12000),
+        });
+        const aiDocDate = new Date(ai.documentDate);
+        const cutoff = new Date(now.getTime() - MAX_DOE_DOC_AGE_DAYS * 24 * 60 * 60 * 1000);
+        if (!Number.isFinite(aiDocDate.getTime()) || ai.confidence < 0.65 || aiDocDate < cutoff || aiDocDate > now) {
+            return { ok: false, error: `DOE freshness guard blocked: ${ai.reason}` };
+        }
+        const documentDate = aiDocDate;
         const effectiveAt = documentDate;
         // Try to infer region from PDF text first.
         let region = /mindanao/i.test(normalized)
@@ -265,7 +280,6 @@ exports.doePdfParser = {
         const sourceType = raw.sourceType;
         const statusLabel = (0, confidence_1.statusLabelForSourceType)(sourceType);
         const confidenceScore = (0, confidence_1.confidenceForSourceType)(sourceType);
-        const now = raw.scrapedAt ?? new Date();
         const maybeAddPrice = (fuelType, price) => {
             if (typeof price !== "number")
                 return;
@@ -281,7 +295,7 @@ exports.doePdfParser = {
                 sourceUrl: raw.sourceUrl,
                 scrapedAt: now,
                 effectiveAt: effectiveAt ?? undefined,
-                sourcePublishedAt: documentDate ?? now,
+                sourcePublishedAt: documentDate,
             });
         };
         maybeAddPrice("Gasoline", gasPrice);
@@ -307,7 +321,7 @@ exports.doePdfParser = {
                     sourceUrl: raw.sourceUrl,
                     scrapedAt: now,
                     effectiveAt: effectiveAt ?? undefined,
-                    sourcePublishedAt: documentDate ?? now,
+                    sourcePublishedAt: documentDate,
                 });
             };
             maybeAddDelta("Gasoline", gasDelta);

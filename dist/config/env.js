@@ -17,16 +17,12 @@ const EnvSchema = zod_1.z.object({
     SEED_ADMIN_PASSWORD: zod_1.z.string().min(8).optional(),
     // Queue/Workers
     REDIS_URL: zod_1.z.string().min(1).optional(),
-    // Source selection
-    SOURCES_MODE: zod_1.z.enum(["all", "doe_only"]).optional().default("all"),
     // Schedules (cron strings)
     SCHEDULE_GLOBAL_FETCH: zod_1.z.string().min(1).optional(),
-    SCHEDULE_PH_OFFICIAL: zod_1.z.string().min(1).optional(),
-    SCHEDULE_PH_COMPANY: zod_1.z.string().min(1).optional(),
-    SCHEDULE_PH_OBSERVED: zod_1.z.string().min(1).optional(),
-    SCHEDULE_RECONCILE: zod_1.z.string().min(1).optional(),
+    SCHEDULE_AI_INGESTION: zod_1.z.string().min(1).optional(),
     SCHEDULE_DATA_QUALITY: zod_1.z.string().min(1).optional(),
     SCHEDULE_AI_ESTIMATION: zod_1.z.string().min(1).optional(),
+    ENABLE_NEW_ESTIMATOR: zod_1.z.enum(["true", "false"]).optional().default("true"),
     // Groq AI
     GROQ_API_KEY: zod_1.z.string().optional(),
     GROQ_MODEL: zod_1.z.string().default("llama-3.3-70b-versatile"),

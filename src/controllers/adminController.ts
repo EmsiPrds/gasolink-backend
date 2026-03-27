@@ -11,7 +11,8 @@ import { NormalizedFuelRecord } from "../models/NormalizedFuelRecord";
 import { FinalPublishedFuelPrice } from "../models/FinalPublishedFuelPrice";
 import { refreshGlobalPrices } from "../services/globalPriceService";
 import { MockGlobalPriceProvider } from "../services/providers/MockGlobalPriceProvider";
-import { collectorsQueue, qualityQueue, reconcileQueue } from "../queue/queues";
+import { collectorsQueue, qualityQueue } from "../queue/queues";
+import { emitPipelineEvent } from "../realtime/socketServer";
 import {
   AdminAlertBodySchema,
   AdminCompanyPriceBodySchema,
@@ -20,6 +21,35 @@ import {
   AdminPhPriceBodySchema,
   IdParamSchema,
 } from "../validators/adminValidators";
+import { normalizeSourceUrl } from "../utils/doeLatestPolicy";
+const MAX_DOE_DOC_AGE_DAYS = 14;
+
+type ActiveDoeDocument = null | {
+  sourceUrl: string;
+  documentDate: string;
+  confidence?: number;
+  reason?: string;
+};
+
+async function getActiveDoeDocument(now: Date): Promise<ActiveDoeDocument> {
+  const from = new Date(now.getTime() - MAX_DOE_DOC_AGE_DAYS * 24 * 60 * 60 * 1000);
+  const raw = await RawScrapedSource.findOne({
+    sourceType: "official_local",
+    aiSelectedLatest: true,
+    aiDocumentDate: { $gte: from, $lte: now },
+  })
+    .sort({ aiDocumentDate: -1, scrapedAt: -1 })
+    .select({ sourceUrl: 1, aiDocumentDate: 1, aiConfidence: 1, aiReason: 1 })
+    .lean();
+
+  if (!raw?.sourceUrl || !(raw as any).aiDocumentDate) return null;
+  return {
+    sourceUrl: String(raw.sourceUrl),
+    documentDate: new Date((raw as any).aiDocumentDate).toISOString(),
+    confidence: typeof (raw as any).aiConfidence === "number" ? (raw as any).aiConfidence : undefined,
+    reason: typeof (raw as any).aiReason === "string" ? (raw as any).aiReason : undefined,
+  };
+}
 
 export async function adminSummary(_req: Request, res: Response) {
   const [phCount, companyCount, insightsCount, alertsCount] = await Promise.all([
@@ -172,23 +202,39 @@ export async function refreshGlobalNow(_req: Request, res: Response) {
 
 // Ingestion health + pipeline browsing
 export async function ingestionHealth(_req: Request, res: Response) {
+  const now = new Date();
+  const from = new Date(now.getTime() - MAX_DOE_DOC_AGE_DAYS * 24 * 60 * 60 * 1000);
+  const activeDoeDocument = await getActiveDoeDocument(now);
+
   const [
     rawCount,
     rawFailed,
     normalizedCount,
     publishedCount,
     latestLog,
-    collectorsLog,
-    reconcileLog,
+    aiIngestionLog,
+    aiSearchLog,
+    aiEstimationLog,
     qualityLog,
   ] = await Promise.all([
     RawScrapedSource.countDocuments({}),
     RawScrapedSource.countDocuments({ processingStatus: "failed" }),
-    NormalizedFuelRecord.countDocuments({}),
-    FinalPublishedFuelPrice.countDocuments({}),
+    NormalizedFuelRecord.countDocuments(
+      activeDoeDocument
+        ? {
+            sourceType: "official_local",
+            sourceUrl: activeDoeDocument.sourceUrl,
+            $or: [{ effectiveAt: { $gte: from } }, { sourcePublishedAt: { $gte: from } }],
+          }
+        : {
+            _id: null,
+          },
+    ),
+    FinalPublishedFuelPrice.countDocuments({ updatedAt: { $gte: from } }),
     UpdateLog.findOne({}).sort({ timestamp: -1 }).lean(),
-    UpdateLog.findOne({ module: "collectors" }).sort({ timestamp: -1 }).lean(),
-    UpdateLog.findOne({ module: "reconciliation" }).sort({ timestamp: -1 }).lean(),
+    UpdateLog.findOne({ module: { $in: ["pipeline_run", "ai_ingestion"] } }).sort({ timestamp: -1 }).lean(),
+    UpdateLog.findOne({ module: "ai_search_job", timestamp: { $gte: from } }).sort({ timestamp: -1 }).lean(),
+    UpdateLog.findOne({ module: "ai_estimation" }).sort({ timestamp: -1 }).lean(),
     UpdateLog.findOne({ module: "data_quality" }).sort({ timestamp: -1 }).lean(),
   ]);
 
@@ -196,6 +242,11 @@ export async function ingestionHealth(_req: Request, res: Response) {
     log
       ? { lastRunAt: log.timestamp, status: log.status, message: log.message }
       : null;
+  const aiSearchStatus = {
+    lastRunAt: now,
+    status: "success",
+    message: "Skipped (DOE-only mode).",
+  };
 
   return res.json(
     ok({
@@ -205,40 +256,114 @@ export async function ingestionHealth(_req: Request, res: Response) {
       publishedCount,
       latestLog: latestLog ?? null,
       pipelineStatus: {
-        collectors: formatModuleLog(collectorsLog),
-        reconciliation: formatModuleLog(reconcileLog),
+        aiIngestion: formatModuleLog(aiIngestionLog),
+        aiSearch: aiSearchStatus,
+        aiEstimation: formatModuleLog(aiEstimationLog),
         dataQuality: formatModuleLog(qualityLog),
       },
+      activeDoeDocument,
     }),
   );
 }
 
 export async function listRawSources(_req: Request, res: Response) {
   const status = String(_req.query.status ?? "").trim();
+  const sourceType = String(_req.query.sourceType ?? "").trim();
   const q: Record<string, unknown> = {};
   if (status) q.processingStatus = status;
+  if (sourceType) q.sourceType = sourceType;
   const items = await RawScrapedSource.find(q).sort({ scrapedAt: -1 }).limit(200).lean();
   return res.json(ok({ items }));
 }
 
 export async function listNormalizedRecords(_req: Request, res: Response) {
-  const items = await NormalizedFuelRecord.find({}).sort({ updatedAt: -1 }).limit(200).lean();
-  return res.json(ok({ items }));
+  const now = new Date();
+  const from = new Date(now.getTime() - MAX_DOE_DOC_AGE_DAYS * 24 * 60 * 60 * 1000);
+  const sourceCategory = String(_req.query.sourceCategory ?? "").trim();
+  const fuelType = String(_req.query.fuelType ?? "").trim();
+  const q: Record<string, unknown> = {};
+  if (sourceCategory) q.sourceCategory = sourceCategory;
+  if (fuelType) q.fuelType = fuelType;
+  q.$or = [{ effectiveAt: { $gte: from } }, { sourcePublishedAt: { $gte: from } }];
+  q.sourceType = "official_local";
+  const docs = await NormalizedFuelRecord.find(q).sort({ updatedAt: -1 }).limit(1000).lean();
+  const activeDoeDocument = await getActiveDoeDocument(now);
+  const items = activeDoeDocument
+    ? docs
+        .filter((doc: any) => normalizeSourceUrl(String(doc.sourceUrl ?? "")) === normalizeSourceUrl(activeDoeDocument.sourceUrl))
+        .slice(0, 200)
+    : [];
+
+  return res.json(
+    ok({
+      items,
+      activeDoeDocument,
+    }),
+  );
 }
 
 export async function listPublishedPrices(_req: Request, res: Response) {
-  const items = await FinalPublishedFuelPrice.find({}).sort({ updatedAt: -1 }).limit(200).lean();
-  return res.json(ok({ items }));
+  const now = new Date();
+  const from = new Date(now.getTime() - MAX_DOE_DOC_AGE_DAYS * 24 * 60 * 60 * 1000);
+  const fuelType = String(_req.query.fuelType ?? "").trim();
+  const region = String(_req.query.region ?? "").trim();
+  const q: Record<string, unknown> = {};
+  if (fuelType) q.fuelType = fuelType;
+  if (region) q.region = region;
+  q.updatedAt = { $gte: from };
+  const activeDoeDocument = await getActiveDoeDocument(now);
+
+  const docs = await FinalPublishedFuelPrice.find(q).sort({ updatedAt: -1 }).limit(500).lean();
+  const items = activeDoeDocument
+    ? docs
+        .filter((doc: any) =>
+          (doc.supportingSources ?? []).some(
+            (src: any) =>
+              src.sourceType === "official_local" &&
+              normalizeSourceUrl(String(src.sourceUrl ?? "")) === normalizeSourceUrl(activeDoeDocument.sourceUrl),
+          ),
+        )
+        .slice(0, 200)
+    : [];
+
+  return res.json(
+    ok({
+      items,
+      activeDoeDocument,
+    }),
+  );
 }
 
 export async function triggerCollectors(_req: Request, res: Response) {
-  await collectorsQueue.add("manual_collect", {}, { jobId: `manual_collect_${Date.now()}` });
-  return res.json(ok({ requested: true, message: "Accuracy-first source collection queued." }));
+  await collectorsQueue.add("manual_ai_ingest", {}, { jobId: `manual_ai_ingest_${Date.now()}` });
+  emitPipelineEvent(
+    "pipeline:manual-triggered",
+    {
+      kind: "ai_ingestion",
+      at: new Date().toISOString(),
+      by: _req.user?.email ?? "unknown",
+    },
+    true,
+  );
+  return res.json(ok({ requested: true, message: "AI ingestion queued." }));
+}
+
+export async function triggerAiSearch(_req: Request, res: Response) {
+  await collectorsQueue.add("manual_ai_search", {}, { jobId: `manual_ai_search_${Date.now()}` });
+  emitPipelineEvent(
+    "pipeline:manual-triggered",
+    {
+      kind: "ai_search",
+      at: new Date().toISOString(),
+      by: _req.user?.email ?? "unknown",
+    },
+    true,
+  );
+  return res.json(ok({ requested: true, message: "Manual AI search queued." }));
 }
 
 export async function triggerReconcile(_req: Request, res: Response) {
-  await reconcileQueue.add("manual_reconcile", {}, { jobId: `manual_reconcile_${Date.now()}` });
-  return res.json(ok({ requested: true }));
+  return res.json(ok({ requested: false, message: "Rule-based reconciliation is deprecated and disabled." }));
 }
 
 export async function triggerQuality(_req: Request, res: Response) {

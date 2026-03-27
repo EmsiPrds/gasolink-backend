@@ -170,6 +170,9 @@ export type AiExtractionResult = {
     productName?: string;
     sourceName: string;
     sourceUrl: string;
+    credibility?: "authoritative" | "verified_report" | "unknown";
+    contextSummary?: string;
+    reliabilityScore?: number;
   }>;
   confidence: number;
   reasoning: string;
@@ -180,6 +183,7 @@ export type AiPriceEstimationResult = {
   confidence: number;
   reasoning: string;
   isReliable: boolean;
+  sourceReferences?: string[];
 };
 
 export type AiDiscoveryResult = {
@@ -317,45 +321,222 @@ async function callGroqWithFallback(params: any, retries = 2): Promise<any> {
   throw lastError;
 }
 
+type Credibility = "authoritative" | "verified_report" | "unknown";
+
+type RankedSearchResult = SearchResult & {
+  host: string;
+  credibility: Credibility;
+  authorityScore: number;
+};
+
+function extractHost(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function classifyCredibility(host: string): Credibility {
+  const authoritativeHosts = [
+    "doe.gov.ph",
+    "petron.com",
+    "petron.com.ph",
+    "shell.com.ph",
+    "caltex.com",
+    "chevron.com",
+    "seaoil.com.ph",
+    "unioil.com",
+    "phoenixfuels.ph",
+    "cleanfuel.ph",
+  ];
+  const verifiedReportHosts = [
+    "gmanetwork.com",
+    "abs-cbn.com",
+    "inquirer.net",
+    "philstar.com",
+    "rappler.com",
+    "mb.com.ph",
+    "business.inquirer.net",
+  ];
+
+  if (authoritativeHosts.some((h) => host === h || host.endsWith(`.${h}`))) return "authoritative";
+  if (verifiedReportHosts.some((h) => host === h || host.endsWith(`.${h}`))) return "verified_report";
+  return "unknown";
+}
+
+function scoreSearchResult(result: SearchResult): RankedSearchResult {
+  const host = extractHost(result.link);
+  const credibility = classifyCredibility(host);
+  const titleSnippet = `${result.title} ${result.snippet}`.toLowerCase();
+  const recencySignal = /\b(today|yesterday|latest|this week|effective|adjustment)\b/.test(titleSnippet) ? 0.08 : 0;
+  const fuelSignal = /\b(gasoline|diesel|kerosene|fuel|oil)\b/.test(titleSnippet) ? 0.07 : 0;
+  const authorityBase = credibility === "authoritative" ? 0.8 : credibility === "verified_report" ? 0.6 : 0.25;
+  return {
+    ...result,
+    host,
+    credibility,
+    authorityScore: Math.min(1, authorityBase + recencySignal + fuelSignal),
+  };
+}
+
+function dedupeAndRankSearchResults(results: SearchResult[]): RankedSearchResult[] {
+  const byUrl = new Map<string, RankedSearchResult>();
+  for (const result of results) {
+    const ranked = scoreSearchResult(result);
+    const existing = byUrl.get(ranked.link);
+    if (!existing || ranked.authorityScore > existing.authorityScore) {
+      byUrl.set(ranked.link, ranked);
+    }
+  }
+  return Array.from(byUrl.values()).sort((a, b) => b.authorityScore - a.authorityScore);
+}
+
+function parseIsoDate(value?: string): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isWithinDays(date: Date, days: number): boolean {
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+  return diffMs >= 0 && diffMs <= days * 24 * 60 * 60 * 1000;
+}
+
+function isAdjustmentRelevant(text: string): boolean {
+  const normalized = text.toLowerCase();
+  const hasFuel = /\b(gasoline|diesel|kerosene|fuel|oil)\b/.test(normalized);
+  const hasAdjustmentSignal = /\b(price adjustment|pump price|rollback|increase|decrease|hike|effective)\b/.test(normalized);
+  const hasLikelyNoise = /\b(typhoon|bayanihan|response|relief|donation|csr|price freeze|freeze)\b/.test(normalized);
+  return hasFuel && hasAdjustmentSignal && !hasLikelyNoise;
+}
+
+function filterRecentRelevantResults(ranked: RankedSearchResult[]): RankedSearchResult[] {
+  return ranked.filter((r) => {
+    const text = `${r.title} ${r.snippet} ${r.link}`;
+    const lowerUrl = r.link.toLowerCase();
+    // Exclude known non-market advisories that can look fuel-related but are not regular pump-price updates.
+    if (/(typhoon|price-freeze|price%20freeze|bayanihan)/.test(lowerUrl)) return false;
+    const yearMatch = text.match(/\b(20\d{2})\b/);
+    if (yearMatch) {
+      const y = Number(yearMatch[1]);
+      const currentYear = new Date().getFullYear();
+      if (Number.isFinite(y) && y < currentYear) return false;
+    }
+    if (!isAdjustmentRelevant(text)) return false;
+    // If Serper provides a date, enforce freshness strictly.
+    const dated = parseIsoDate(r.date);
+    if (dated) return isWithinDays(dated, 21);
+    // If date is missing, keep only stronger sources.
+    return r.credibility !== "unknown" && r.authorityScore >= 0.6;
+  });
+}
+
+function sanitizeExtraction(result: AiExtractionResult, ranked: RankedSearchResult[]): AiExtractionResult {
+  const rankedByUrl = new Map(ranked.map((r) => [r.link, r]));
+  const dedupe = new Set<string>();
+  const cleanedItems = result.items
+    .map((item) => {
+      const source = rankedByUrl.get(item.sourceUrl);
+      const credibility = source?.credibility ?? "unknown";
+      const reliabilityScore = source ? Math.min(1, source.authorityScore * (result.confidence || 0.3)) : 0.2;
+      return {
+        ...item,
+        credibility,
+        reliabilityScore,
+        contextSummary: [
+          item.fuelType,
+          item.region ?? "UnknownRegion",
+          item.effectiveAt ?? "UnknownDate",
+          item.pricePerLiter != null ? `price=${item.pricePerLiter}` : item.priceChange != null ? `delta=${item.priceChange}` : "",
+        ]
+          .filter(Boolean)
+          .join(" | "),
+      };
+    })
+    .filter((item) => {
+      if (item.pricePerLiter == null && item.priceChange == null) return false;
+      if (!item.effectiveAt) return false;
+      const effectiveAt = parseIsoDate(item.effectiveAt);
+      if (!effectiveAt || !isWithinDays(effectiveAt, 21)) return false;
+      if (!item.region) return false;
+      return true;
+    })
+    .filter((item) => {
+      const key = `${item.sourceUrl}::${item.fuelType}::${item.region}::${item.effectiveAt}`;
+      if (dedupe.has(key)) return false;
+      dedupe.add(key);
+      return true;
+    });
+
+  return {
+    ...result,
+    items: cleanedItems,
+    confidence: Math.max(result.confidence ?? 0, cleanedItems.length > 0 ? 0.35 : 0),
+  };
+}
+
 export async function searchAndExtractFuelPricesWithAi(): Promise<AiExtractionResult | null> {
   const today = new Date().toISOString().split("T")[0];
-  const queries = [
+  const strictQueries = [
     `site:doe.gov.ph "fuel price" adjustment ${today}`,
     `site:petron.com "price adjustment" ${today}`,
     `site:shell.com.ph "price adjustment" ${today}`,
+  ];
+  const broadQueries = [
     "Philippines fuel price increase decrease latest official",
     "oil price adjustment Philippines this week",
     "DOE Philippines fuel price advisory latest",
+    "Philippines fuel price advisory Tuesday",
+    "DOE retail pump prices Philippines",
+    "Petron Shell Caltex fuel price advisory Philippines",
+    `site:doe.gov.ph "price adjustment" Philippines`,
+    `site:inquirer.net OR site:gmanetwork.com OR site:rappler.com "fuel price adjustment" Philippines`,
   ];
 
   const allSearchResults: SearchResult[] = [];
-  for (const query of queries) {
+  for (const query of strictQueries) {
     const results = await searchWeb(query);
     allSearchResults.push(...results);
+  }
+
+  // If strict date-targeted searches found little/no data, widen the net.
+  if (allSearchResults.length < 5) {
+    for (const query of broadQueries) {
+      const results = await searchWeb(query);
+      allSearchResults.push(...results);
+    }
   }
 
   if (allSearchResults.length === 0) {
     return null;
   }
 
-  // Remove duplicates and limit context size
-  const uniqueResults = Array.from(new Set(allSearchResults.map((r) => r.link)))
-    .map((link) => allSearchResults.find((r) => r.link === link)!)
-    .slice(0, 10);
+  // Prioritize authoritative/verified, then require recency/relevance.
+  const uniqueResults = filterRecentRelevantResults(dedupeAndRankSearchResults(allSearchResults)).slice(0, 12);
+  if (uniqueResults.length === 0) return null;
 
   const context = uniqueResults
-    .map((r) => `Source: ${r.title}\nURL: ${r.link}\nSnippet: ${r.snippet}\nDate: ${r.date ?? "N/A"}`)
+    .map(
+      (r) =>
+        `Source: ${r.title}\nURL: ${r.link}\nHost: ${r.host}\nCredibility: ${r.credibility}\nAuthorityScore: ${r.authorityScore.toFixed(
+          2,
+        )}\nSnippet: ${r.snippet}\nDate: ${r.date ?? "N/A"}`,
+    )
     .join("\n\n");
 
   const prompt = `
 Today's Date: ${today}
 
-You are a Philippine fuel price expert. Extract the LATEST fuel price adjustments (effective this week or next) from the search results.
+You are a Philippine fuel price intelligence agent. Extract the LATEST fuel price adjustments (effective this week or next) from the search results.
 
 CRITICAL: 
-1. Only extract data that is LATEST and RELEVANT to the current week. 
+1. Prefer data that is LATEST and RELEVANT to the current week, but if none exists, use the most recent credible advisory found.
 2. Fuel price changes in the Philippines are usually announced on Mondays and effective on Tuesdays.
-3. If multiple adjustments are found, ONLY return the one with the LATEST "effectiveAt" date.
+3. If multiple adjustments are found, prioritize items with the latest effective date window.
+4. Reject low-credibility claims unless corroborated by authoritative/verified sources.
+5. Remove duplicates: same fuelType + region + effectiveAt + sourceUrl should appear only once.
 
 SOURCES TO TRUST (In order of priority):
 1. Department of Energy (DOE) - doe.gov.ph (OFFICIAL)
@@ -364,9 +545,11 @@ SOURCES TO TRUST (In order of priority):
 
 EXTRACTION RULES:
 - effectiveAt: The date the price change becomes active (YYYY-MM-DD).
+- If exact effectiveAt is not available from snippet context, set it to null.
 - priceChange: The adjustment amount (e.g., 1.50 for increase, -0.60 for decrease).
 - fuelType: Must be one of: Gasoline, Diesel, Kerosene.
-- region: If specified (e.g., NCR), otherwise leave null.
+- region: If specified (e.g., NCR), otherwise null is allowed.
+- Include a short context summary per item.
 
 Return valid JSON ONLY:
 {
@@ -375,10 +558,12 @@ Return valid JSON ONLY:
       "fuelType": "Gasoline" | "Diesel" | "Kerosene",
       "pricePerLiter": number | null,
       "priceChange": number | null,
-      "effectiveAt": "YYYY-MM-DD",
+      "effectiveAt": "YYYY-MM-DD" | null,
       "region": "NCR" | "Luzon" | "Visayas" | "Mindanao" | null,
       "sourceName": string,
-      "sourceUrl": string
+      "sourceUrl": string,
+      "credibility": "authoritative" | "verified_report" | "unknown",
+      "contextSummary": string
     }
   ],
   "confidence": number (0.0 to 1.0),
@@ -409,7 +594,8 @@ ${context}
     const content = chatCompletion.choices[0]?.message?.content;
     if (!content) return null;
 
-    return JSON.parse(content) as AiExtractionResult;
+    const parsed = JSON.parse(content) as AiExtractionResult;
+    return sanitizeExtraction(parsed, uniqueResults);
   } catch (error) {
     console.error("Error during Groq AI search-and-extract:", error);
     return null;
@@ -439,6 +625,12 @@ export async function refinePriceWithAi(
 Analyze the following fuel price data points and global market indicators for ${fuelType} in ${region}, Philippines.
 Your goal is to estimate the most accurate current retail pump price per liter.
 
+HARD CONSTRAINTS:
+1. Do NOT invent or hallucinate values.
+2. Use only the provided candidate data points as primary evidence.
+3. Global indicators can adjust confidence, but cannot create a price without candidate evidence.
+4. If evidence is insufficient or contradictory, set "isReliable" to false and lower confidence.
+
 Candidate Data Points:
 ${candidateSummary}
 
@@ -450,13 +642,16 @@ Rules:
 2. "company_advisory" reflects price changes (deltas) which should be applied to the last known price.
 3. "observed_station" are real-time user reports but can be outliers.
 4. "global_api" (Brent/WTI) trends usually affect local prices with a 1-week lag.
+5. The estimatedPrice must be within a realistic range implied by the candidate prices.
+6. Return sourceReferences as exact sourceUrl values from the candidate list used in the estimate.
 
 Return the result in JSON format only:
 {
   "estimatedPrice": number,
   "confidence": number (0.0 to 1.0),
   "reasoning": "short explanation of how you derived this price",
-  "isReliable": boolean (true if data is consistent, false if highly contradictory)
+  "isReliable": boolean (true if data is consistent, false if highly contradictory),
+  "sourceReferences": string[]
 }
 `;
 

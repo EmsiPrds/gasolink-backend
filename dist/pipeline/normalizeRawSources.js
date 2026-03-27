@@ -10,10 +10,13 @@ const UpdateLog_1 = require("../models/UpdateLog");
 const validators_1 = require("../normalization/validators");
 const http_1 = require("../utils/http");
 const constants_1 = require("../parsers/doe/constants");
+const doeLatestPolicy_1 = require("../utils/doeLatestPolicy");
+const MAX_DOE_DOC_AGE_DAYS = 14;
 async function normalizePendingRawSources(params) {
     const limit = params?.limit ?? 50;
     const now = new Date();
     const from = new Date(now.getTime() - 24 * 60 * 60 * 1000); // Only process raw sources from last 24h by default
+    const freshnessCutoff = new Date(now.getTime() - MAX_DOE_DOC_AGE_DAYS * 24 * 60 * 60 * 1000); // current or previous weekly DOE bulletin
     const pending = await RawScrapedSource_1.RawScrapedSource.find({
         $or: [
             // Normal flow: only untouched raw placeholders from the last 24h.
@@ -34,6 +37,16 @@ async function normalizePendingRawSources(params) {
         .limit(limit);
     let normalized = 0;
     let failed = 0;
+    const staged = [];
+    const activeRawDoe = await RawScrapedSource_1.RawScrapedSource.findOne({
+        sourceType: "official_local",
+        aiSelectedLatest: true,
+        aiDocumentDate: { $gte: freshnessCutoff, $lte: now },
+    })
+        .sort({ aiDocumentDate: -1, scrapedAt: -1 })
+        .select({ sourceUrl: 1 })
+        .lean();
+    const activeDoeUrl = activeRawDoe?.sourceUrl ? (0, doeLatestPolicy_1.normalizeSourceUrl)(String(activeRawDoe.sourceUrl)) : null;
     for (const raw of pending) {
         // Many RawScrapedSource rows are created as placeholders (discovered URLs).
         // Fetch content here if missing so parsing can proceed.
@@ -86,28 +99,51 @@ async function normalizePendingRawSources(params) {
         }
         for (const item of res.items) {
             const validated = (0, validators_1.validateCandidate)(item);
-            const fingerprint = (0, fingerprint_1.buildFingerprint)({
-                sourceType: validated.sourceType,
-                sourceUrl: validated.sourceUrl,
-                sourcePublishedAt: validated.sourcePublishedAt ? validated.sourcePublishedAt.toISOString() : "",
-                fuelType: validated.fuelType,
-                region: validated.region,
-                city: validated.city ?? "",
-                pricePerLiter: validated.pricePerLiter ?? "",
-                priceChange: validated.priceChange ?? "",
-                effectiveAt: validated.effectiveAt ? validated.effectiveAt.toISOString() : "",
-            });
-            await NormalizedFuelRecord_1.NormalizedFuelRecord.updateOne({ fingerprint }, {
-                $setOnInsert: {
-                    ...validated,
-                    fingerprint,
-                    rawSourceId: raw._id,
-                },
-            }, { upsert: true });
-            normalized += 1;
+            if (validated.sourceType === "official_local") {
+                const strictDocDate = (0, doeLatestPolicy_1.resolveDoeDocumentDate)(validated.sourceUrl, validated.effectiveAt ?? validated.sourcePublishedAt);
+                if (!strictDocDate)
+                    continue;
+            }
+            staged.push({ raw, validated });
         }
-        raw.processingStatus = "normalized";
-        await raw.save();
+    }
+    for (const entry of staged) {
+        const { raw, validated } = entry;
+        if (validated.sourceType === "official_local") {
+            const docDate = (0, doeLatestPolicy_1.resolveDoeDocumentDate)(validated.sourceUrl, validated.effectiveAt ?? validated.sourcePublishedAt);
+            if (!docDate || docDate < freshnessCutoff)
+                continue;
+            if (!activeDoeUrl)
+                continue;
+            if ((0, doeLatestPolicy_1.normalizeSourceUrl)(validated.sourceUrl) !== activeDoeUrl)
+                continue;
+        }
+        const fingerprint = (0, fingerprint_1.buildFingerprint)({
+            sourceType: validated.sourceType,
+            sourceUrl: validated.sourceUrl,
+            sourcePublishedAt: validated.sourcePublishedAt ? validated.sourcePublishedAt.toISOString() : "",
+            fuelType: validated.fuelType,
+            region: validated.region,
+            city: validated.city ?? "",
+            pricePerLiter: validated.pricePerLiter ?? "",
+            priceChange: validated.priceChange ?? "",
+            effectiveAt: validated.effectiveAt ? validated.effectiveAt.toISOString() : "",
+        });
+        await NormalizedFuelRecord_1.NormalizedFuelRecord.updateOne({ fingerprint }, {
+            $setOnInsert: {
+                ...validated,
+                sourceCategory: validated.sourceType === "official_local" ? "doe_official" : "web_scrape",
+                fingerprint,
+                rawSourceId: raw._id,
+            },
+        }, { upsert: true });
+        normalized += 1;
+    }
+    for (const raw of pending) {
+        if (raw.processingStatus === "raw") {
+            raw.processingStatus = "normalized";
+            await raw.save();
+        }
     }
     await UpdateLog_1.UpdateLog.create({
         module: "normalize",

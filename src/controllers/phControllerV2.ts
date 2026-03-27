@@ -23,6 +23,10 @@ function toLegacyPhShape(p: any) {
     status: p.finalStatus,
     updatedAt: p.updatedAt,
     confidenceScore: p.confidenceScore,
+    confidenceLabel: p.confidenceLabel,
+    estimatedPrice: typeof p.finalPrice === "number" ? p.finalPrice : null,
+    sourceBreakdown: p.sourceBreakdown ?? [],
+    explanation: p.estimateExplanation ?? "",
     lastVerifiedAt: p.lastVerifiedAt,
     supportingSources: p.supportingSources,
   };
@@ -34,7 +38,15 @@ export async function getPhLatest(req: Request, res: Response) {
   const published = await FinalPublishedFuelPrice.aggregate([
     // "Latest PH prices" on the dashboard is intended to be the regional headline price,
     // not company-specific advisories nor city/station observations.
-    { $match: { region, displayType: "ph_final", companyName: { $in: [null, ""] }, city: { $in: [null, ""] } } },
+    {
+      $match: {
+        region,
+        displayType: "ph_final",
+        companyName: { $in: [null, ""] },
+        city: { $in: [null, ""] },
+        confidenceScore: { $gte: 0.35 },
+      },
+    },
     { $sort: { updatedAt: -1 } },
     { $group: { _id: "$fuelType", doc: { $first: "$$ROOT" } } },
     { $replaceRoot: { newRoot: "$doc" } },
@@ -71,6 +83,7 @@ export async function getPhHistory(req: Request, res: Response) {
     displayType: "ph_final",
     companyName: { $in: [null, ""] },
     city: { $in: [null, ""] },
+    confidenceScore: { $gte: 0.35 },
   })
     .sort({ updatedAt: 1 })
     .lean();
@@ -137,6 +150,7 @@ export async function reportPublicPrice(req: Request, res: Response) {
       {
         $setOnInsert: {
           sourceType: "observed_station",
+          sourceCategory: "user_report",
           statusLabel: "Observed",
           confidenceScore: 0.5, // Base confidence for anonymous public reports
           fuelType: validated.fuelType,
@@ -151,7 +165,7 @@ export async function reportPublicPrice(req: Request, res: Response) {
            fingerprint,
          },
        },
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: "after" },
     );
 
     return res.status(httpStatus.created).json(ok({ record }));

@@ -21,7 +21,7 @@ async function upsertActiveAlert(params: {
         createdAt: params.createdAt,
       },
     },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: "after" },
   );
 }
 

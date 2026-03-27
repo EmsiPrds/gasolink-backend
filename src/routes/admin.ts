@@ -22,6 +22,7 @@ import {
   listPhPrices,
   listRawSources,
   refreshGlobalNow,
+  triggerAiSearch,
   triggerCollectors,
   triggerQuality,
   triggerReconcile,
@@ -76,6 +77,7 @@ adminRouter.get("/ingestion/raw-sources", listRawSources);
 adminRouter.get("/ingestion/normalized", listNormalizedRecords);
 adminRouter.get("/ingestion/published", listPublishedPrices);
 adminRouter.post("/ingestion/collect", triggerCollectors);
+adminRouter.post("/ingestion/ai-search", triggerAiSearch);
 adminRouter.post("/ingestion/reconcile", triggerReconcile);
 adminRouter.post("/ingestion/quality", triggerQuality);
 

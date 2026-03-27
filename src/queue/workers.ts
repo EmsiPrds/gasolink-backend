@@ -1,48 +1,41 @@
 import { Worker } from "bullmq";
 import { redisConnection } from "./redis";
-import { runAccuracyFirstCollection } from "../jobs/accuracyCollectionJob";
-import { reconcileFuelRecords } from "../reconciliation/reconcileFuelRecords";
 import { runAiPriceEstimation } from "../reconciliation/aiPriceEstimation";
 import { runDataQualityMonitor } from "../quality/dataQualityMonitor";
 import { UpdateLog } from "../models/UpdateLog";
 import { drainPendingRawSources } from "../pipeline/normalizeRawSources";
+import { runConfiguredSourceCollection } from "../services/sourceCollectionService";
+import { cleanupOutdatedDoeData } from "../services/doeLatestCleanupService";
 
 const connection = redisConnection();
 
 export function startWorkers() {
-  // Collectors worker
+  // AI ingestion worker (legacy collectors queue retained for compatibility)
   new Worker(
     "collectors",
     async () => {
       try {
-        const collection = await runAccuracyFirstCollection();
-        const reconcileResult = await reconcileFuelRecords();
+        const collectionResult = await runConfiguredSourceCollection({ scope: "official" });
+        const normalizeResult = await drainPendingRawSources({ limitPerPass: 100, maxPasses: 3 });
+        await runDataQualityMonitor();
+        const estimationResult = await runAiPriceEstimation();
+        const cleanup = await cleanupOutdatedDoeData();
         await UpdateLog.create({
-          module: "collectors",
+          module: "pipeline_run",
           status: "success",
-          message: `Collectors finished. officialCreated=${collection.officialCollection.created} officialSkipped=${collection.officialCollection.skippedUnchanged} normalized=${collection.normalization.normalized} failed=${collection.normalization.failed} reconciled=${reconcileResult.upserted} aiFallback=${collection.aiFallback.ran ? "yes" : "no"}`,
+          message: `DOE-only pipeline finished. collected=${collectionResult.created}/${collectionResult.attempted} rawFailed=${collectionResult.failed} normalized=${normalizeResult.normalized} normalizeFailed=${normalizeResult.failed} estimates=${estimationResult.estimations} cleanupNormalized=${cleanup.deletedNormalized} cleanupPublished=${cleanup.deletedPublished}`,
           timestamp: new Date(),
         }).catch(() => {});
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await UpdateLog.create({
-          module: "collectors",
+          module: "pipeline_run",
           status: "failure",
-          message: `Collectors failed: ${message}`,
+          message: `Pipeline failed: ${message}`,
           timestamp: new Date(),
         }).catch(() => {});
         throw error;
       }
-    },
-    { connection },
-  );
-
-  // Reconciliation worker
-  new Worker(
-    "reconcile",
-    async () => {
-      await drainPendingRawSources({ limitPerPass: 150, maxPasses: 6 });
-      await reconcileFuelRecords();
     },
     { connection },
   );
@@ -68,7 +61,7 @@ export function startWorkers() {
   UpdateLog.create({
     module: "workers",
     status: "success",
-    message: "Workers started (collectors, reconcile, quality, ai-estimation).",
+    message: "Workers started (pipeline-run, quality, ai-estimation).",
     timestamp: new Date(),
   }).catch(() => {});
 }

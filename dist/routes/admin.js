@@ -38,6 +38,7 @@ exports.adminRouter.get("/ingestion/raw-sources", adminController_1.listRawSourc
 exports.adminRouter.get("/ingestion/normalized", adminController_1.listNormalizedRecords);
 exports.adminRouter.get("/ingestion/published", adminController_1.listPublishedPrices);
 exports.adminRouter.post("/ingestion/collect", adminController_1.triggerCollectors);
+exports.adminRouter.post("/ingestion/ai-search", adminController_1.triggerAiSearch);
 exports.adminRouter.post("/ingestion/reconcile", adminController_1.triggerReconcile);
 exports.adminRouter.post("/ingestion/quality", adminController_1.triggerQuality);
 // DOE manual ingestion (PDF upload / link)

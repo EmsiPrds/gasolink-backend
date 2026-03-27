@@ -15,17 +15,12 @@ const EnvSchema = z.object({
   // Queue/Workers
   REDIS_URL: z.string().min(1).optional(),
 
-  // Source selection
-  SOURCES_MODE: z.enum(["all", "doe_only"]).optional().default("all"),
-
   // Schedules (cron strings)
   SCHEDULE_GLOBAL_FETCH: z.string().min(1).optional(),
-  SCHEDULE_PH_OFFICIAL: z.string().min(1).optional(),
-  SCHEDULE_PH_COMPANY: z.string().min(1).optional(),
-  SCHEDULE_PH_OBSERVED: z.string().min(1).optional(),
-  SCHEDULE_RECONCILE: z.string().min(1).optional(),
+  SCHEDULE_AI_INGESTION: z.string().min(1).optional(),
   SCHEDULE_DATA_QUALITY: z.string().min(1).optional(),
   SCHEDULE_AI_ESTIMATION: z.string().min(1).optional(),
+  ENABLE_NEW_ESTIMATOR: z.enum(["true", "false"]).optional().default("true"),
 
   // Groq AI
   GROQ_API_KEY: z.string().optional(),

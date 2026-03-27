@@ -5,6 +5,8 @@ import { extractEffectivity } from "../shared/deltaExtract";
 import { extractPdfText } from "../../services/pdfTextService";
 import { inferDoeDocumentDateFromText, inferDoeDocumentDateFromUrl } from "./dateInference";
 import { DOE_PDF_PARSER_ID } from "./constants";
+import { validateLatestDoeDocWithAi } from "../../services/doeFreshnessAiService";
+const MAX_DOE_DOC_AGE_DAYS = 14;
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&");
@@ -191,13 +193,27 @@ export const doePdfParser: SourceParser = {
       return { ok: false, error: "PDF parsed but content did not match expected fuel patterns" };
     }
 
-    // Try to infer effectivity from text (e.g. "effective March 19, 2026").
-    const documentDate =
+    const now = raw.scrapedAt ?? new Date();
+    const deterministicDate =
       extractEffectivity(normalized) ??
       inferDoeDocumentDateFromText(normalized) ??
       ((raw as any).sourcePublishedAt instanceof Date ? (raw as any).sourcePublishedAt : null) ??
       inferDoeDocumentDateFromUrl(raw.sourceUrl);
 
+    // OpenAI freshness guard: verify document date within allowed weekly window (fail-closed).
+    const ai = await validateLatestDoeDocWithAi({
+      now,
+      listingUrl: raw.sourceUrl,
+      candidates: [{ url: raw.sourceUrl, label: raw.sourceName, publishedAtHint: deterministicDate ? new Date(deterministicDate).toISOString() : null }],
+      pdfTextSnippet: normalized.slice(0, 12000),
+    });
+    const aiDocDate = new Date(ai.documentDate);
+    const cutoff = new Date(now.getTime() - MAX_DOE_DOC_AGE_DAYS * 24 * 60 * 60 * 1000);
+    if (!Number.isFinite(aiDocDate.getTime()) || ai.confidence < 0.65 || aiDocDate < cutoff || aiDocDate > now) {
+      return { ok: false, error: `DOE freshness guard blocked: ${ai.reason}` };
+    }
+
+    const documentDate = aiDocDate;
     const effectiveAt = documentDate;
 
     // Try to infer region from PDF text first.
@@ -292,7 +308,6 @@ export const doePdfParser: SourceParser = {
     const sourceType = raw.sourceType;
     const statusLabel = statusLabelForSourceType(sourceType);
     const confidenceScore = confidenceForSourceType(sourceType);
-    const now = raw.scrapedAt ?? new Date();
 
     const maybeAddPrice = (fuelType: "Gasoline" | "Diesel" | "Kerosene", price: number | null) => {
       if (typeof price !== "number") return;
@@ -308,7 +323,7 @@ export const doePdfParser: SourceParser = {
         sourceUrl: raw.sourceUrl,
         scrapedAt: now,
         effectiveAt: effectiveAt ?? undefined,
-        sourcePublishedAt: documentDate ?? now,
+        sourcePublishedAt: documentDate,
       });
     };
 
@@ -336,7 +351,7 @@ export const doePdfParser: SourceParser = {
           sourceUrl: raw.sourceUrl,
           scrapedAt: now,
           effectiveAt: effectiveAt ?? undefined,
-            sourcePublishedAt: documentDate ?? now,
+            sourcePublishedAt: documentDate,
         });
       };
 

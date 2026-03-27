@@ -4,7 +4,7 @@ import { UpdateLog } from "../models/UpdateLog";
 import { buildFingerprint } from "../normalization/fingerprint";
 import { validateCandidate } from "../normalization/validators";
 import type { FuelType, Region } from "../models/enums";
-import { reconcileFuelRecords } from "../reconciliation/reconcileFuelRecords";
+import { runAiPriceEstimation } from "../reconciliation/aiPriceEstimation";
 
 function isKnownCompanySource(sourceName: string, sourceUrl: string): boolean {
   const combined = `${sourceName} ${sourceUrl}`.toLowerCase();
@@ -27,12 +27,19 @@ type AiSearchOptions = {
   degradeToEstimate?: boolean;
   requireEffectivity?: boolean;
   requireRegion?: boolean;
+  minReliabilityScore?: number;
 };
 
 export async function runAiSearchDataGathering(options?: AiSearchOptions) {
   console.log("==> Starting AI-driven supporting search data gathering...");
 
   try {
+    // Cleanup: remove previously ingested non-market noise records so they don't bias estimates.
+    await NormalizedFuelRecord.deleteMany({
+      sourceType: "estimate",
+      sourceUrl: { $regex: /(typhoon|price-freeze|price%20freeze|bayanihan)/i },
+    });
+
     const aiResult = await searchAndExtractFuelPricesWithAi();
 
     if (!aiResult || aiResult.items.length === 0) {
@@ -48,6 +55,10 @@ export async function runAiSearchDataGathering(options?: AiSearchOptions) {
     const scrapedAt = new Date();
     const seenFingerprints = new Set<string>();
     const operations: Parameters<typeof NormalizedFuelRecord.bulkWrite>[0] = [];
+    const minReliabilityScore = options?.minReliabilityScore ?? 0.3;
+    let filteredUnreliable = 0;
+    let filteredDuplicates = 0;
+    const seenLogicalKeys = new Set<string>();
 
     for (const item of aiResult.items) {
       // Basic validation: ensure we have at least a price or a change
@@ -63,6 +74,18 @@ export async function runAiSearchDataGathering(options?: AiSearchOptions) {
         continue;
       }
 
+      if ((item.reliabilityScore ?? 0) < minReliabilityScore) {
+        filteredUnreliable += 1;
+        continue;
+      }
+
+      const logicalKey = `${item.sourceUrl}::${item.fuelType}::${item.region ?? ""}::${item.effectiveAt ?? ""}`;
+      if (seenLogicalKeys.has(logicalKey)) {
+        filteredDuplicates += 1;
+        continue;
+      }
+      seenLogicalKeys.add(logicalKey);
+
       let sourceType: "company_advisory" | "estimate" = "estimate";
       let statusLabel: "Advisory" | "Estimate" = "Estimate";
 
@@ -71,7 +94,7 @@ export async function runAiSearchDataGathering(options?: AiSearchOptions) {
         statusLabel = "Advisory";
       }
 
-      const region = item.region as Region | undefined;
+      const region = (item.region as Region | undefined) ?? ((options?.requireRegion ?? true) ? undefined : "NCR");
       if (!region) continue;
 
       const confidenceScore =
@@ -81,6 +104,7 @@ export async function runAiSearchDataGathering(options?: AiSearchOptions) {
 
       const candidate = {
         sourceType,
+        sourceCategory: "web_scrape",
         statusLabel,
         confidenceScore,
         fuelType: item.fuelType as FuelType,
@@ -137,13 +161,13 @@ export async function runAiSearchDataGathering(options?: AiSearchOptions) {
     await UpdateLog.create({
       module: "ai_search_job",
       status: "success",
-      message: `AI fallback search finished. created ${savedCount} new estimate/supporting records.`,
+      message: `AI data gathering finished. scanned=${aiResult.items.length} created=${savedCount} unreliableFiltered=${filteredUnreliable} duplicateFiltered=${filteredDuplicates}`,
       timestamp: new Date(),
     });
 
     if (!options?.skipReconcile) {
-      console.log("==> Triggering automatic reconciliation after AI fallback search...");
-      await reconcileFuelRecords();
+      console.log("==> Triggering AI-native publish update after AI ingestion...");
+      await runAiPriceEstimation();
     }
 
     return { savedCount, scannedCount: aiResult.items.length };

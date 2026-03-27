@@ -16,6 +16,17 @@ const PublishedSupportingSourceSchema = new Schema(
   { _id: false },
 );
 
+const SourceBreakdownSchema = new Schema(
+  {
+    sourceCategory: { type: String, required: true, trim: true },
+    sampleSize: { type: Number, required: true, min: 0 },
+    avgConfidence: { type: Number, required: true, min: 0, max: 1 },
+    avgPrice: { type: Number, min: 0 },
+    freshnessHours: { type: Number, min: 0 },
+  },
+  { _id: false },
+);
+
 const FinalPublishedFuelPriceSchema = new Schema(
   {
     // displayType can be used to separate "official_latest" vs "observed" vs "advisory_delta"
@@ -37,6 +48,9 @@ const FinalPublishedFuelPriceSchema = new Schema(
     supportingSources: { type: [PublishedSupportingSourceSchema], required: true, default: [] },
     finalStatus: { type: String, enum: StatusLabelValues, required: true, index: true },
     confidenceScore: { type: Number, required: true, min: 0, max: 1, index: true },
+    confidenceLabel: { type: String, required: true, default: "Low", index: true },
+    estimateExplanation: { type: String, required: true, default: "" },
+    sourceBreakdown: { type: [SourceBreakdownSchema], required: true, default: [] },
 
     lastVerifiedAt: { type: Date, required: true, index: true },
     updatedAt: { type: Date, required: true, default: () => new Date(), index: true },
