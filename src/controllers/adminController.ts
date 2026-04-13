@@ -335,31 +335,21 @@ export async function listPublishedPrices(_req: Request, res: Response) {
 }
 
 export async function triggerCollectors(_req: Request, res: Response) {
-  await collectorsQueue.add("manual_ai_ingest", {}, { jobId: `manual_ai_ingest_${Date.now()}` });
+  await collectorsQueue.add("manual_doe_ingest", {}, { jobId: `manual_doe_ingest_${Date.now()}` });
   emitPipelineEvent(
     "pipeline:manual-triggered",
     {
-      kind: "ai_ingestion",
+      kind: "manual_doe_ingestion",
       at: new Date().toISOString(),
       by: _req.user?.email ?? "unknown",
     },
     true,
   );
-  return res.json(ok({ requested: true, message: "AI ingestion queued." }));
+  return res.json(ok({ requested: true, message: "Manual DOE ingestion/publish queued." }));
 }
 
 export async function triggerAiSearch(_req: Request, res: Response) {
-  await collectorsQueue.add("manual_ai_search", {}, { jobId: `manual_ai_search_${Date.now()}` });
-  emitPipelineEvent(
-    "pipeline:manual-triggered",
-    {
-      kind: "ai_search",
-      at: new Date().toISOString(),
-      by: _req.user?.email ?? "unknown",
-    },
-    true,
-  );
-  return res.json(ok({ requested: true, message: "Manual AI search queued." }));
+  return res.json(ok({ requested: false, message: "AI search scraping is disabled. Use DOE manual upload flow." }));
 }
 
 export async function triggerReconcile(_req: Request, res: Response) {

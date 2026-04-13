@@ -145,11 +145,37 @@ export async function runAiPriceEstimation() {
         if (!docDate || docDate < from) return false;
         return normalizeSourceUrl(candidate.sourceUrl) === activeDoeUrl;
       });
-      if (!latestDocCandidates.length) continue;
 
       const baseline = await FuelPricePH.findOne({ fuelType, region }).sort({ updatedAt: -1 }).lean();
       const baselinePrice =
         typeof baseline?.price === "number" && Number.isFinite(baseline.price) ? baseline.price : defaultBaselinePrice(fuelType);
+
+      if (!latestDocCandidates.length) {
+        const publishKey = `fused_est::${fuelType}::${region}`;
+        await FinalPublishedFuelPrice.findOneAndUpdate(
+          { publishKey },
+          {
+            displayType: "ph_final",
+            fuelType,
+            region,
+            finalPrice: baselinePrice,
+            averagePrice: baselinePrice,
+            priceChange: 0,
+            finalStatus: "Estimate",
+            confidenceScore: 0.35,
+            confidenceLabel: confidenceLabel(0.35),
+            estimateExplanation: `Fallback baseline used: latest DOE rows for ${fuelType}/${region} were unavailable or invalid.`,
+            sourceBreakdown: [],
+            lastVerifiedAt: now,
+            updatedAt: now,
+            publishKey,
+            supportingSources: [],
+          },
+          { upsert: true },
+        );
+        estimations++;
+        continue;
+      }
 
       const withDerivedPrice = latestDocCandidates
         .map((candidate) => {
@@ -161,7 +187,32 @@ export async function runAiPriceEstimation() {
       const cleanedPrices = removeOutliers(withDerivedPrice.map((candidate) => candidate.derivedPrice));
       const cleanedSet = new Set(cleanedPrices.map((price) => price.toFixed(4)));
       const cleanedCandidates = withDerivedPrice.filter((candidate) => cleanedSet.has(candidate.derivedPrice.toFixed(4)));
-      if (!cleanedCandidates.length) continue;
+      if (!cleanedCandidates.length) {
+        const publishKey = `fused_est::${fuelType}::${region}`;
+        await FinalPublishedFuelPrice.findOneAndUpdate(
+          { publishKey },
+          {
+            displayType: "ph_final",
+            fuelType,
+            region,
+            finalPrice: baselinePrice,
+            averagePrice: baselinePrice,
+            priceChange: 0,
+            finalStatus: "Estimate",
+            confidenceScore: 0.35,
+            confidenceLabel: confidenceLabel(0.35),
+            estimateExplanation: `Fallback baseline used: ${fuelType}/${region} candidates were filtered out as outliers.`,
+            sourceBreakdown: [],
+            lastVerifiedAt: now,
+            updatedAt: now,
+            publishKey,
+            supportingSources: [],
+          },
+          { upsert: true },
+        );
+        estimations++;
+        continue;
+      }
 
       const weighted = cleanedCandidates.reduce(
         (acc, candidate) => {
@@ -210,7 +261,12 @@ export async function runAiPriceEstimation() {
       const sampleScore = clamp(cleanedCandidates.length / 10, 0, 1);
       const agreementScore = clamp(1 - agreementSpread, 0, 1);
       const freshnessScore = clamp(1 - freshnessHours / (24 * 7), 0, 1);
-      const finalConfidence = clamp(0.35 * avgSourceConfidence + 0.25 * agreementScore + 0.25 * freshnessScore + 0.15 * sampleScore + aiConfidenceBoost, 0.2, 0.98);
+      // Dashboard filters out low-confidence rows; keep DOE-official publish rows visible once validated.
+      const finalConfidence = clamp(
+        0.35 * avgSourceConfidence + 0.25 * agreementScore + 0.25 * freshnessScore + 0.15 * sampleScore + aiConfidenceBoost,
+        0.35,
+        0.98,
+      );
 
       const supportingCandidates = cleanedCandidates.slice(0, 8);
       const publishKey = `fused_est::${fuelType}::${region}`;

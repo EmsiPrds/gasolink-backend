@@ -33,7 +33,7 @@ const RawScrapedSourceSchema = new mongoose_1.Schema({
     isManualAdminSource: { type: Boolean, default: false, index: true },
     uploadContext: {
         uploadedBy: { type: mongoose_1.Schema.Types.ObjectId, ref: "AdminUser" },
-        uploadType: { type: String, enum: ["file", "link"] },
+        uploadType: { type: String, enum: ["file", "link", "pdf", "csv", "xlsx", "image"] },
         originalFilename: { type: String, trim: true },
         originalUrl: { type: String, trim: true },
         note: { type: String, trim: true },

@@ -12,12 +12,34 @@ async function getPhLatest(req, res) {
     // Prefer accuracy-first published records; fall back to legacy table if none exist.
     const published = await FinalPublishedFuelPrice_1.FinalPublishedFuelPrice.aggregate([
         { $match: { region, displayType: "ph_final", confidenceScore: { $gte: 0.35 } } },
-        { $sort: { updatedAt: -1 } },
+        {
+            $addFields: {
+                _statusPriority: {
+                    $cond: [{ $eq: ["$finalStatus", "Official"] }, 2, { $cond: [{ $eq: ["$finalStatus", "Verified"] }, 1, 0] }],
+                },
+            },
+        },
+        { $sort: { _statusPriority: -1, confidenceScore: -1, updatedAt: -1 } },
         { $group: { _id: "$fuelType", doc: { $first: "$$ROOT" } } },
         { $replaceRoot: { newRoot: "$doc" } },
     ]);
-    const items = published.length > 0
-        ? published.map((p) => ({
+    const publishedWithRegion = published.length > 0
+        ? published
+        : await FinalPublishedFuelPrice_1.FinalPublishedFuelPrice.aggregate([
+            { $match: { displayType: "ph_final", confidenceScore: { $gte: 0.35 } } },
+            {
+                $addFields: {
+                    _statusPriority: {
+                        $cond: [{ $eq: ["$finalStatus", "Official"] }, 2, { $cond: [{ $eq: ["$finalStatus", "Verified"] }, 1, 0] }],
+                    },
+                },
+            },
+            { $sort: { _statusPriority: -1, confidenceScore: -1, updatedAt: -1 } },
+            { $group: { _id: "$fuelType", doc: { $first: "$$ROOT" } } },
+            { $replaceRoot: { newRoot: "$doc" } },
+        ]);
+    const items = publishedWithRegion.length > 0
+        ? publishedWithRegion.map((p) => ({
             // Shape-compat response for current frontend until it’s upgraded:
             _id: p._id,
             fuelType: p.fuelType,
@@ -54,8 +76,18 @@ async function getPhHistory(req, res) {
     })
         .sort({ updatedAt: 1 })
         .lean();
-    const items = published.length > 0
-        ? published.map((p) => ({
+    const publishedWithRegion = published.length > 0
+        ? published
+        : await FinalPublishedFuelPrice_1.FinalPublishedFuelPrice.find({
+            fuelType,
+            updatedAt: { $gte: from },
+            displayType: "ph_final",
+            confidenceScore: { $gte: 0.35 },
+        })
+            .sort({ updatedAt: 1 })
+            .lean();
+    const items = publishedWithRegion.length > 0
+        ? publishedWithRegion.map((p) => ({
             _id: p._id,
             fuelType: p.fuelType,
             price: typeof p.finalPrice === "number" ? p.finalPrice : null,

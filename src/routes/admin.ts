@@ -81,8 +81,8 @@ adminRouter.post("/ingestion/ai-search", triggerAiSearch);
 adminRouter.post("/ingestion/reconcile", triggerReconcile);
 adminRouter.post("/ingestion/quality", triggerQuality);
 
-// DOE manual ingestion (PDF upload / link)
-adminRouter.post("/doe/upload", upload.single("pdf"), uploadDoePdf);
+// DOE manual ingestion (file upload / link)
+adminRouter.post("/doe/upload", upload.single("file"), uploadDoePdf);
 adminRouter.post("/doe/link", submitDoeLink);
 adminRouter.get("/doe/uploads", listDoeUploads);
 adminRouter.get("/doe/uploads/:rawSourceId", getDoeUploadDetails);

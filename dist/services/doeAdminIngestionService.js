@@ -10,6 +10,8 @@ exports.commitDoePreview = commitDoePreview;
 const path_1 = __importDefault(require("path"));
 const RawScrapedSource_1 = require("../models/RawScrapedSource");
 const NormalizedFuelRecord_1 = require("../models/NormalizedFuelRecord");
+const FinalPublishedFuelPrice_1 = require("../models/FinalPublishedFuelPrice");
+const FuelPricePH_1 = require("../models/FuelPricePH");
 const UpdateLog_1 = require("../models/UpdateLog");
 const pdfTextService_1 = require("./pdfTextService");
 const doePdfParser_1 = require("../parsers/doe/doePdfParser");
@@ -17,14 +19,128 @@ const http_1 = require("../utils/http");
 const fingerprint_1 = require("../normalization/fingerprint");
 const validators_1 = require("../normalization/validators");
 const constants_1 = require("../parsers/doe/constants");
+const doeUploadTextService_1 = require("./doeUploadTextService");
+const aiPriceEstimation_1 = require("../reconciliation/aiPriceEstimation");
+const doeLatestCleanupService_1 = require("./doeLatestCleanupService");
+const dataQualityMonitor_1 = require("../quality/dataQualityMonitor");
+const env_1 = require("../config/env");
+const MAX_MANUAL_DOE_DOC_AGE_DAYS = 14;
+const MAX_FUTURE_EFFECTIVE_DAYS = 3;
+function isBlockedDoeUrl(url) {
+    return /(typhoon|price-freeze|price%20freeze|bayanihan|relief)/i.test(url);
+}
+function isAllowedDoeDomain(url) {
+    if (url.startsWith("local:"))
+        return true;
+    try {
+        const host = new URL(url).hostname.toLowerCase();
+        return host === "doe.gov.ph" || host.endsWith(".doe.gov.ph");
+    }
+    catch {
+        return false;
+    }
+}
+function validateEffectiveAtWindow(date) {
+    const now = Date.now();
+    const minMs = now - MAX_MANUAL_DOE_DOC_AGE_DAYS * 24 * 60 * 60 * 1000;
+    const maxMs = now + MAX_FUTURE_EFFECTIVE_DAYS * 24 * 60 * 60 * 1000;
+    const t = date.getTime();
+    return Number.isFinite(t) && t >= minMs && t <= maxMs;
+}
+async function analyzeDoeCommitRowsWithAi(rows) {
+    const included = rows.filter((row) => row.include);
+    if (included.length === 0) {
+        return {
+            parseConfidence: 0,
+            warnings: ["No rows were selected for commit."],
+            summary: "No included rows to analyze.",
+        };
+    }
+    const effectiveDates = included
+        .map((row) => row.effectiveAt)
+        .filter((value) => typeof value === "string" && value.length > 0)
+        .sort();
+    if (!env_1.env.OPENAI_API_KEY || env_1.env.OPENAI_API_KEY.includes("replace_me")) {
+        return {
+            parseConfidence: 0.7,
+            detectedEffectiveAt: effectiveDates[effectiveDates.length - 1],
+            warnings: ["OPENAI_API_KEY missing; used deterministic validation summary."],
+            summary: "Manual DOE rows accepted with deterministic validation.",
+        };
+    }
+    const prompt = `You are validating manually-uploaded DOE fuel records before publish.
+Return ONLY JSON:
+{
+  "parseConfidence": number,
+  "detectedEffectiveAt": "ISO date string or null",
+  "warnings": string[],
+  "summary": string
+}
+
+Rows:
+${JSON.stringify(included).slice(0, 14000)}`;
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${env_1.env.OPENAI_API_KEY}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            model: env_1.env.OPENAI_MODEL,
+            messages: [{ role: "user", content: prompt }],
+            response_format: { type: "json_object" },
+        }),
+    });
+    if (!response.ok) {
+        const body = await response.text();
+        return {
+            parseConfidence: 0.65,
+            detectedEffectiveAt: effectiveDates[effectiveDates.length - 1],
+            warnings: [`AI validation request failed (${response.status}). ${body.slice(0, 180)}`],
+            summary: "Fell back to deterministic validation after AI request failure.",
+        };
+    }
+    const json = (await response.json());
+    const content = json?.choices?.[0]?.message?.content;
+    if (!content || typeof content !== "string") {
+        return {
+            parseConfidence: 0.65,
+            detectedEffectiveAt: effectiveDates[effectiveDates.length - 1],
+            warnings: ["AI validation returned empty content."],
+            summary: "Fell back to deterministic validation after empty AI response.",
+        };
+    }
+    try {
+        const parsed = JSON.parse(content);
+        const parseConfidence = Math.max(0, Math.min(1, Number(parsed.parseConfidence ?? 0.65)));
+        return {
+            parseConfidence,
+            detectedEffectiveAt: parsed.detectedEffectiveAt ?? effectiveDates[effectiveDates.length - 1],
+            warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+            summary: typeof parsed.summary === "string" ? parsed.summary : "AI validation completed.",
+        };
+    }
+    catch {
+        return {
+            parseConfidence: 0.65,
+            detectedEffectiveAt: effectiveDates[effectiveDates.length - 1],
+            warnings: ["AI validation JSON parse failed; using deterministic fallback."],
+            summary: "Fallback validation used due to malformed AI output.",
+        };
+    }
+}
 async function createDoeRawFromUpload(params) {
     const sourceUrl = `local:${path_1.default.basename(params.originalFilename)}`;
-    const textResult = await (0, pdfTextService_1.extractPdfText)({ localPath: params.localPath });
+    const textResult = await (0, doeUploadTextService_1.extractDoeUploadText)({
+        localPath: params.localPath,
+        originalFilename: params.originalFilename,
+        mimeType: params.mimeType,
+    });
     if (!textResult.ok) {
         await UpdateLog_1.UpdateLog.create({
             module: "admin_doe",
             status: "failure",
-            message: `Failed to extract DOE PDF text from upload ${params.originalFilename}: ${textResult.error}`,
+            message: `Failed to extract DOE text from upload ${params.originalFilename}: ${textResult.error}`,
             timestamp: new Date(),
         }).catch(() => { });
         throw new Error(textResult.error);
@@ -41,16 +157,22 @@ async function createDoeRawFromUpload(params) {
         isManualAdminSource: true,
         uploadContext: {
             uploadedBy: params.adminId,
-            uploadType: "file",
+            uploadType: textResult.format,
             originalFilename: params.originalFilename,
             note: params.note,
         },
     });
-    const preview = await buildDoePreviewFromRaw(raw._id.toString());
+    const preview = await buildDoePreviewFromRaw(raw._id.toString(), textResult.warnings);
     return preview;
 }
 async function createDoeRawFromLink(params) {
     const url = params.url;
+    if (!isAllowedDoeDomain(url)) {
+        throw new Error("Only DOE links from doe.gov.ph are allowed.");
+    }
+    if (isBlockedDoeUrl(url)) {
+        throw new Error("DOE link appears to be a non-market advisory and is blocked.");
+    }
     let text = null;
     let finalPdfUrl = url;
     const warnings = [];
@@ -120,35 +242,47 @@ async function buildDoePreviewFromRaw(rawSourceId, extraWarnings = []) {
     }
     const parseResult = await doePdfParser_1.doePdfParser.parse(raw);
     if (!parseResult.ok) {
-        throw new Error(parseResult.error);
+        return {
+            rawSourceId: raw._id.toString(),
+            rows: [],
+            warnings: [...extraWarnings, `Parser warning: ${parseResult.error}`],
+            rawTextSample: typeof raw.rawText === "string" ? raw.rawText.slice(0, 4000) : "",
+        };
     }
     const rows = [];
+    const rowWarnings = [];
     for (const [idx, item] of parseResult.items.entries()) {
-        const validated = (0, validators_1.validateCandidate)(item);
-        const direction = typeof validated.priceChange === "number"
-            ? validated.priceChange > 0
-                ? "up"
-                : validated.priceChange < 0
-                    ? "down"
-                    : undefined
-            : undefined;
-        rows.push({
-            tempId: `cand-${idx}`,
-            fuelType: validated.fuelType,
-            pricePerLiter: validated.pricePerLiter ?? undefined,
-            priceChange: validated.priceChange ?? undefined,
-            priceAdjustmentDirection: direction,
-            effectiveAt: validated.effectiveAt ? validated.effectiveAt.toISOString() : undefined,
-            region: validated.region,
-            companyName: validated.companyName ?? undefined,
-            sourceUrl: validated.sourceUrl,
-            warnings: [],
-        });
+        try {
+            const validated = (0, validators_1.validateCandidate)(item);
+            const direction = typeof validated.priceChange === "number"
+                ? validated.priceChange > 0
+                    ? "up"
+                    : validated.priceChange < 0
+                        ? "down"
+                        : undefined
+                : undefined;
+            rows.push({
+                tempId: `cand-${idx}`,
+                fuelType: validated.fuelType,
+                pricePerLiter: validated.pricePerLiter ?? undefined,
+                priceChange: validated.priceChange ?? undefined,
+                priceAdjustmentDirection: direction,
+                effectiveAt: validated.effectiveAt ? validated.effectiveAt.toISOString() : undefined,
+                region: validated.region,
+                companyName: validated.companyName ?? undefined,
+                sourceUrl: validated.sourceUrl,
+                warnings: [],
+            });
+        }
+        catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            rowWarnings.push(`Row ${idx + 1}: ${msg}`);
+        }
     }
     return {
         rawSourceId: raw._id.toString(),
         rows,
-        warnings: extraWarnings,
+        warnings: [...extraWarnings, ...rowWarnings],
         rawTextSample: typeof raw.rawText === "string" ? raw.rawText.slice(0, 4000) : "",
     };
 }
@@ -157,66 +291,192 @@ async function commitDoePreview(params) {
     if (!raw) {
         throw new Error("Raw DOE source not found");
     }
+    if (!isAllowedDoeDomain(raw.sourceUrl)) {
+        throw new Error("Only DOE sources are allowed for manual commit.");
+    }
+    if (isBlockedDoeUrl(raw.sourceUrl)) {
+        throw new Error("Blocked non-market DOE source URL.");
+    }
+    const aiInterpretation = await analyzeDoeCommitRowsWithAi(params.rows);
     let createdOrUpdated = 0;
+    let newestEffectiveAt = null;
+    let staleRejected = 0;
+    let invalidRejected = 0;
+    const rowWarnings = [];
+    const acceptedRows = [];
     for (const row of params.rows) {
         if (!row.include)
             continue;
         const effectiveAtDate = row.effectiveAt ? new Date(row.effectiveAt) : undefined;
-        const validated = (0, validators_1.validateCandidate)({
-            sourceType: "official_local",
-            statusLabel: "Official",
-            confidenceScore: 1,
-            companyName: row.companyName,
-            stationName: undefined,
-            fuelType: row.fuelType,
-            productName: undefined,
-            region: row.region,
-            city: row.area,
-            pricePerLiter: row.pricePerLiter,
-            priceChange: row.priceChange,
-            currency: "PHP",
-            sourceName: raw.sourceName,
-            sourceUrl: raw.sourceUrl,
-            sourcePublishedAt: effectiveAtDate,
-            scrapedAt: raw.scrapedAt ?? new Date(),
-            effectiveAt: effectiveAtDate,
-            updatedAt: new Date(),
-            fingerprint: "",
-            rawSourceId: raw._id,
-            supportingSources: [],
-        });
-        const fingerprint = (0, fingerprint_1.buildFingerprint)({
-            sourceType: validated.sourceType,
-            sourceUrl: validated.sourceUrl,
-            sourcePublishedAt: validated.sourcePublishedAt ? validated.sourcePublishedAt.toISOString() : "",
-            fuelType: validated.fuelType,
-            region: validated.region,
-            city: validated.city ?? "",
-            pricePerLiter: validated.pricePerLiter ?? "",
-            priceChange: validated.priceChange ?? "",
-            effectiveAt: validated.effectiveAt ? validated.effectiveAt.toISOString() : "",
-        });
-        const existing = await NormalizedFuelRecord_1.NormalizedFuelRecord.findOne({ fingerprint }).lean();
-        if (existing) {
+        if (!effectiveAtDate || !validateEffectiveAtWindow(effectiveAtDate)) {
+            staleRejected += 1;
             continue;
         }
-        await NormalizedFuelRecord_1.NormalizedFuelRecord.updateOne({ fingerprint }, {
-            $setOnInsert: {
-                ...validated,
-                fingerprint,
+        if (!row.region || !row.fuelType) {
+            invalidRejected += 1;
+            continue;
+        }
+        let publishPricePerLiter = row.pricePerLiter;
+        let publishConfidence = 0.95;
+        let publishStatus = "Official";
+        if (typeof publishPricePerLiter !== "number" || !Number.isFinite(publishPricePerLiter) || publishPricePerLiter <= 0) {
+            if (typeof row.priceChange === "number" && Number.isFinite(row.priceChange)) {
+                const baseline = await FuelPricePH_1.FuelPricePH.findOne({ fuelType: row.fuelType, region: row.region })
+                    .sort({ updatedAt: -1 })
+                    .lean();
+                const baselinePrice = typeof baseline?.price === "number" && Number.isFinite(baseline.price) ? baseline.price : null;
+                if (baselinePrice != null) {
+                    publishPricePerLiter = baselinePrice + row.priceChange;
+                    publishConfidence = 0.8;
+                    publishStatus = "Advisory";
+                    rowWarnings.push(`Row ${row.tempId}: derived price from baseline (${baselinePrice.toFixed(2)}) + change (${row.priceChange.toFixed(2)}).`);
+                }
+            }
+        }
+        if (typeof publishPricePerLiter !== "number" || !Number.isFinite(publishPricePerLiter) || publishPricePerLiter <= 0) {
+            invalidRejected += 1;
+            rowWarnings.push(`Row ${row.tempId}: missing valid price and unable to derive from change.`);
+            continue;
+        }
+        try {
+            const validated = (0, validators_1.validateCandidate)({
+                sourceType: "official_local",
+                statusLabel: "Official",
+                confidenceScore: 1,
+                companyName: row.companyName,
+                stationName: undefined,
+                fuelType: row.fuelType,
+                productName: undefined,
+                region: row.region,
+                city: row.area,
+                pricePerLiter: row.pricePerLiter,
+                priceChange: row.priceChange,
+                currency: "PHP",
+                sourceName: raw.sourceName,
+                sourceUrl: raw.sourceUrl,
+                sourcePublishedAt: effectiveAtDate,
+                scrapedAt: raw.scrapedAt ?? new Date(),
+                effectiveAt: effectiveAtDate,
+                updatedAt: new Date(),
+                fingerprint: "",
                 rawSourceId: raw._id,
-                updatedAt: validated.scrapedAt,
-            },
-        }, { upsert: true });
-        createdOrUpdated += 1;
+                supportingSources: [],
+            });
+            const fingerprint = (0, fingerprint_1.buildFingerprint)({
+                sourceType: validated.sourceType,
+                sourceUrl: validated.sourceUrl,
+                sourcePublishedAt: validated.sourcePublishedAt ? validated.sourcePublishedAt.toISOString() : "",
+                fuelType: validated.fuelType,
+                region: validated.region,
+                city: validated.city ?? "",
+                pricePerLiter: validated.pricePerLiter ?? "",
+                priceChange: validated.priceChange ?? "",
+                effectiveAt: validated.effectiveAt ? validated.effectiveAt.toISOString() : "",
+            });
+            const existing = await NormalizedFuelRecord_1.NormalizedFuelRecord.findOne({ fingerprint }).lean();
+            if (existing) {
+                continue;
+            }
+            await NormalizedFuelRecord_1.NormalizedFuelRecord.updateOne({ fingerprint }, {
+                $setOnInsert: {
+                    ...validated,
+                    fingerprint,
+                    rawSourceId: raw._id,
+                    updatedAt: validated.scrapedAt,
+                },
+            }, { upsert: true });
+            createdOrUpdated += 1;
+            if (effectiveAtDate && (!newestEffectiveAt || effectiveAtDate > newestEffectiveAt)) {
+                newestEffectiveAt = effectiveAtDate;
+            }
+            acceptedRows.push({
+                fuelType: row.fuelType,
+                region: row.region,
+                pricePerLiter: publishPricePerLiter,
+                effectiveAt: effectiveAtDate,
+                confidenceScore: publishConfidence,
+                finalStatus: publishStatus,
+            });
+        }
+        catch (error) {
+            invalidRejected += 1;
+            const msg = error instanceof Error ? error.message : String(error);
+            rowWarnings.push(`Row ${row.tempId}: ${msg}`);
+            continue;
+        }
     }
+    await RawScrapedSource_1.RawScrapedSource.updateMany({ sourceType: "official_local", sourceName: "DOE", _id: { $ne: raw._id } }, { $set: { aiSelectedLatest: false } });
+    raw.aiSelectedLatest = true;
+    raw.aiDocumentDate = newestEffectiveAt ?? new Date();
+    raw.aiConfidence = Math.max(0.9, aiInterpretation.parseConfidence);
+    raw.aiReason = aiInterpretation.summary;
     raw.processingStatus = "normalized";
     await raw.save();
+    // Keep AI fusion available, but we publish operator-approved official prices after it
+    // so the dashboard reflects exact DOE committed values.
+    const estimationResult = createdOrUpdated > 0 ? await (0, aiPriceEstimation_1.runAiPriceEstimation)() : { estimations: 0 };
+    let manualPublished = 0;
+    for (const row of acceptedRows) {
+        const publishKey = `manual_doe::${row.fuelType}::${row.region}`;
+        await FinalPublishedFuelPrice_1.FinalPublishedFuelPrice.findOneAndUpdate({ publishKey }, {
+            displayType: "ph_final",
+            fuelType: row.fuelType,
+            region: row.region,
+            finalPrice: row.pricePerLiter,
+            averagePrice: row.pricePerLiter,
+            priceChange: 0,
+            finalStatus: row.finalStatus,
+            confidenceScore: row.confidenceScore,
+            confidenceLabel: row.confidenceScore >= 0.9 ? "Very High" : row.confidenceScore >= 0.75 ? "High" : "Medium",
+            estimateExplanation: row.finalStatus === "Official"
+                ? "Direct official DOE manual upload commit."
+                : "DOE advisory-derived price from baseline + change.",
+            sourceBreakdown: [
+                {
+                    sourceCategory: "doe_official",
+                    sampleSize: 1,
+                    avgConfidence: row.confidenceScore,
+                    avgPrice: row.pricePerLiter,
+                    freshnessHours: 0,
+                },
+            ],
+            lastVerifiedAt: new Date(),
+            updatedAt: new Date(),
+            publishKey,
+            supportingSources: [
+                {
+                    sourceType: "official_local",
+                    sourceName: raw.sourceName,
+                    sourceUrl: raw.sourceUrl,
+                    sourcePublishedAt: row.effectiveAt,
+                    scrapedAt: raw.scrapedAt ?? new Date(),
+                    parserVersion: "manual_doe_v1",
+                    confidenceScore: row.confidenceScore,
+                    statusLabel: row.finalStatus,
+                },
+            ],
+        }, { upsert: true });
+        manualPublished += 1;
+    }
+    const cleanupResult = await (0, doeLatestCleanupService_1.cleanupOutdatedDoeData)();
+    await (0, dataQualityMonitor_1.runDataQualityMonitor)();
     await UpdateLog_1.UpdateLog.create({
         module: "admin_doe",
         status: "success",
-        message: `DOE admin commit rawSourceId=${raw._id.toString()} createdOrUpdated=${createdOrUpdated}`,
+        message: `DOE admin commit rawSourceId=${raw._id.toString()} createdOrUpdated=${createdOrUpdated} parseConfidence=${aiInterpretation.parseConfidence.toFixed(2)} staleRejected=${staleRejected} invalidRejected=${invalidRejected} published=${manualPublished} fused=${estimationResult.estimations}`,
         timestamp: new Date(),
     }).catch(() => { });
-    return { ok: true, createdOrUpdated };
+    return {
+        ok: true,
+        createdOrUpdated,
+        parseConfidence: aiInterpretation.parseConfidence,
+        detectedEffectiveAt: aiInterpretation.detectedEffectiveAt,
+        warnings: [...aiInterpretation.warnings, ...rowWarnings],
+        aiSummary: aiInterpretation.summary,
+        staleRejected,
+        invalidRejected,
+        publishedCount: manualPublished,
+        cleanupNormalized: cleanupResult.deletedNormalized,
+        cleanupPublished: cleanupResult.deletedPublished,
+    };
 }

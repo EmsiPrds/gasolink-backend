@@ -12,7 +12,7 @@ import { RawScrapedSource } from "../models/RawScrapedSource";
 export async function uploadDoePdf(req: Request, res: Response) {
   const file = (req as any).file as Express.Multer.File | undefined;
   if (!file) {
-    return res.status(httpStatus.badRequest).json({ ok: false, error: "Missing PDF file" });
+    return res.status(httpStatus.badRequest).json({ ok: false, error: "Missing DOE file upload" });
   }
 
   const note = typeof req.body?.note === "string" ? req.body.note : undefined;
@@ -28,6 +28,7 @@ export async function uploadDoePdf(req: Request, res: Response) {
       adminId: req.user?.sub ?? "unknown",
       localPath: file.path,
       originalFilename: file.originalname,
+      mimeType: file.mimetype,
       note,
     });
 
@@ -42,7 +43,7 @@ export async function uploadDoePdf(req: Request, res: Response) {
     const message = err instanceof Error ? err.message : String(err);
     return res
       .status(httpStatus.internalServerError)
-      .json({ ok: false, error: `Failed to process DOE PDF upload: ${message}` });
+      .json({ ok: false, error: `Failed to process DOE upload: ${message}` });
   }
 }
 

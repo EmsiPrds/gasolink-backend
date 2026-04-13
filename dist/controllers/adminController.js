@@ -299,22 +299,16 @@ async function listPublishedPrices(_req, res) {
     }));
 }
 async function triggerCollectors(_req, res) {
-    await queues_1.collectorsQueue.add("manual_ai_ingest", {}, { jobId: `manual_ai_ingest_${Date.now()}` });
+    await queues_1.collectorsQueue.add("manual_doe_ingest", {}, { jobId: `manual_doe_ingest_${Date.now()}` });
     (0, socketServer_1.emitPipelineEvent)("pipeline:manual-triggered", {
-        kind: "ai_ingestion",
+        kind: "manual_doe_ingestion",
         at: new Date().toISOString(),
         by: _req.user?.email ?? "unknown",
     }, true);
-    return res.json((0, apiResponse_1.ok)({ requested: true, message: "AI ingestion queued." }));
+    return res.json((0, apiResponse_1.ok)({ requested: true, message: "Manual DOE ingestion/publish queued." }));
 }
 async function triggerAiSearch(_req, res) {
-    await queues_1.collectorsQueue.add("manual_ai_search", {}, { jobId: `manual_ai_search_${Date.now()}` });
-    (0, socketServer_1.emitPipelineEvent)("pipeline:manual-triggered", {
-        kind: "ai_search",
-        at: new Date().toISOString(),
-        by: _req.user?.email ?? "unknown",
-    }, true);
-    return res.json((0, apiResponse_1.ok)({ requested: true, message: "Manual AI search queued." }));
+    return res.json((0, apiResponse_1.ok)({ requested: false, message: "AI search scraping is disabled. Use DOE manual upload flow." }));
 }
 async function triggerReconcile(_req, res) {
     return res.json((0, apiResponse_1.ok)({ requested: false, message: "Rule-based reconciliation is deprecated and disabled." }));

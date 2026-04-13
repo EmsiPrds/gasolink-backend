@@ -4,18 +4,17 @@ import { runAiPriceEstimation } from "../reconciliation/aiPriceEstimation";
 import { runDataQualityMonitor } from "../quality/dataQualityMonitor";
 import { UpdateLog } from "../models/UpdateLog";
 import { drainPendingRawSources } from "../pipeline/normalizeRawSources";
-import { runConfiguredSourceCollection } from "../services/sourceCollectionService";
 import { cleanupOutdatedDoeData } from "../services/doeLatestCleanupService";
 
 const connection = redisConnection();
 
 export function startWorkers() {
-  // AI ingestion worker (legacy collectors queue retained for compatibility)
+  // Manual DOE ingestion worker:
+  // consumes admin-uploaded raws, normalizes, then publishes fused outputs.
   new Worker(
     "collectors",
     async () => {
       try {
-        const collectionResult = await runConfiguredSourceCollection({ scope: "official" });
         const normalizeResult = await drainPendingRawSources({ limitPerPass: 100, maxPasses: 3 });
         await runDataQualityMonitor();
         const estimationResult = await runAiPriceEstimation();
@@ -23,7 +22,7 @@ export function startWorkers() {
         await UpdateLog.create({
           module: "pipeline_run",
           status: "success",
-          message: `DOE-only pipeline finished. collected=${collectionResult.created}/${collectionResult.attempted} rawFailed=${collectionResult.failed} normalized=${normalizeResult.normalized} normalizeFailed=${normalizeResult.failed} estimates=${estimationResult.estimations} cleanupNormalized=${cleanup.deletedNormalized} cleanupPublished=${cleanup.deletedPublished}`,
+          message: `DOE manual pipeline finished. normalized=${normalizeResult.normalized} normalizeFailed=${normalizeResult.failed} estimates=${estimationResult.estimations} cleanupNormalized=${cleanup.deletedNormalized} cleanupPublished=${cleanup.deletedPublished}`,
           timestamp: new Date(),
         }).catch(() => {});
       } catch (error) {

@@ -13,7 +13,7 @@ const RawScrapedSource_1 = require("../models/RawScrapedSource");
 async function uploadDoePdf(req, res) {
     const file = req.file;
     if (!file) {
-        return res.status(httpStatus_1.httpStatus.badRequest).json({ ok: false, error: "Missing PDF file" });
+        return res.status(httpStatus_1.httpStatus.badRequest).json({ ok: false, error: "Missing DOE file upload" });
     }
     const note = typeof req.body?.note === "string" ? req.body.note : undefined;
     try {
@@ -26,6 +26,7 @@ async function uploadDoePdf(req, res) {
             adminId: req.user?.sub ?? "unknown",
             localPath: file.path,
             originalFilename: file.originalname,
+            mimeType: file.mimetype,
             note,
         });
         console.log("[admin_doe] uploadDoePdf success", {
@@ -39,7 +40,7 @@ async function uploadDoePdf(req, res) {
         const message = err instanceof Error ? err.message : String(err);
         return res
             .status(httpStatus_1.httpStatus.internalServerError)
-            .json({ ok: false, error: `Failed to process DOE PDF upload: ${message}` });
+            .json({ ok: false, error: `Failed to process DOE upload: ${message}` });
     }
 }
 async function submitDoeLink(req, res) {

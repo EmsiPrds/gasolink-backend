@@ -1,13 +1,16 @@
 import cron from "node-cron";
 import { env } from "../config/env";
-import { collectorsQueue, qualityQueue, aiEstimationQueue } from "../queue/queues";
+import { qualityQueue, aiEstimationQueue } from "../queue/queues";
+import { UpdateLog } from "../models/UpdateLog";
 
 export function startPipelineJobs() {
-  // Scheduled ingest cadence defaults to every 2 hours.
-  const aiIngestion = env.SCHEDULE_AI_INGESTION ?? "0 */2 * * *";
-  cron.schedule(aiIngestion, async () => {
-    await collectorsQueue.add("pipeline-run", {}, { jobId: `pipeline_${Date.now()}` });
-  });
+  // DOE ingest is now manual-admin driven. Keep a startup log so operators know why no cron is running.
+  UpdateLog.create({
+    module: "pipeline_jobs",
+    status: "success",
+    message: "DOE collection cron disabled. Use Admin DOE upload flow for ingestion.",
+    timestamp: new Date(),
+  }).catch(() => {});
 
   // Lightweight guardrails still run more frequently.
   const quality = env.SCHEDULE_DATA_QUALITY ?? "*/20 * * * *";

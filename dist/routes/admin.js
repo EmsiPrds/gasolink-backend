@@ -41,8 +41,8 @@ exports.adminRouter.post("/ingestion/collect", adminController_1.triggerCollecto
 exports.adminRouter.post("/ingestion/ai-search", adminController_1.triggerAiSearch);
 exports.adminRouter.post("/ingestion/reconcile", adminController_1.triggerReconcile);
 exports.adminRouter.post("/ingestion/quality", adminController_1.triggerQuality);
-// DOE manual ingestion (PDF upload / link)
-exports.adminRouter.post("/doe/upload", upload.single("pdf"), adminDoeController_1.uploadDoePdf);
+// DOE manual ingestion (file upload / link)
+exports.adminRouter.post("/doe/upload", upload.single("file"), adminDoeController_1.uploadDoePdf);
 exports.adminRouter.post("/doe/link", adminDoeController_1.submitDoeLink);
 exports.adminRouter.get("/doe/uploads", adminDoeController_1.listDoeUploads);
 exports.adminRouter.get("/doe/uploads/:rawSourceId", adminDoeController_1.getDoeUploadDetails);

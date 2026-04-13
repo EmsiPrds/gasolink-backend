@@ -47,12 +47,42 @@ export async function getPhLatest(req: Request, res: Response) {
         confidenceScore: { $gte: 0.35 },
       },
     },
-    { $sort: { updatedAt: -1 } },
+    {
+      $addFields: {
+        _statusPriority: {
+          $cond: [{ $eq: ["$finalStatus", "Official"] }, 2, { $cond: [{ $eq: ["$finalStatus", "Verified"] }, 1, 0] }],
+        },
+      },
+    },
+    { $sort: { _statusPriority: -1, confidenceScore: -1, updatedAt: -1 } },
     { $group: { _id: "$fuelType", doc: { $first: "$$ROOT" } } },
     { $replaceRoot: { newRoot: "$doc" } },
   ]);
+  const publishedWithRegion =
+    published.length > 0
+      ? published
+      : await FinalPublishedFuelPrice.aggregate([
+          {
+            $match: {
+              displayType: "ph_final",
+              companyName: { $in: [null, ""] },
+              city: { $in: [null, ""] },
+              confidenceScore: { $gte: 0.35 },
+            },
+          },
+          {
+            $addFields: {
+              _statusPriority: {
+                $cond: [{ $eq: ["$finalStatus", "Official"] }, 2, { $cond: [{ $eq: ["$finalStatus", "Verified"] }, 1, 0] }],
+              },
+            },
+          },
+          { $sort: { _statusPriority: -1, confidenceScore: -1, updatedAt: -1 } },
+          { $group: { _id: "$fuelType", doc: { $first: "$$ROOT" } } },
+          { $replaceRoot: { newRoot: "$doc" } },
+        ]);
 
-  const publishedItems = published.map(toLegacyPhShape);
+  const publishedItems = publishedWithRegion.map(toLegacyPhShape);
   const publishedByFuel = new Map(publishedItems.map((i: any) => [i.fuelType, i]));
 
   // If the accuracy-first pipeline hasn't published all fuel types yet, fall back to legacy table for missing ones.
@@ -87,10 +117,23 @@ export async function getPhHistory(req: Request, res: Response) {
   })
     .sort({ updatedAt: 1 })
     .lean();
+  const publishedWithRegion =
+    published.length > 0
+      ? published
+      : await FinalPublishedFuelPrice.find({
+          fuelType,
+          updatedAt: { $gte: from },
+          displayType: "ph_final",
+          companyName: { $in: [null, ""] },
+          city: { $in: [null, ""] },
+          confidenceScore: { $gte: 0.35 },
+        })
+          .sort({ updatedAt: 1 })
+          .lean();
 
   const items =
-    published.length > 0
-      ? published.map(toLegacyPhShape)
+    publishedWithRegion.length > 0
+      ? publishedWithRegion.map(toLegacyPhShape)
       : await FuelPricePH.find({
           fuelType,
           region,
